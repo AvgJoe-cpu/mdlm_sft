@@ -1,0 +1,2 @@
+- dataset.num_samples=10000
+- training.num_epochs=2

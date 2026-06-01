@@ -1,0 +1,24 @@
+defaults:
+  - _self_
+  - model: pythia-70m
+  - dataset: wrp
+
+# Run settings
+checkpoint_name: null
+run_name: null
+seed: 42
+
+training:
+  num_epochs: 1
+  batch_size: 4
+  learning_rate: 2e-5
+  bf16: true
+  optim: adamw_torch
+  use_liger_kernel: false
+  logging_steps: 10
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  report_to: wandb  # Changed from tensorboard to wandb
+  assistant_only_loss: true
+  remove_unused_columns: false
+  push_to_hub: false

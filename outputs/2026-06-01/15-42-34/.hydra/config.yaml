@@ -1,0 +1,51 @@
+checkpoint_name: null
+run_name: null
+seed: 42
+training:
+  num_epochs: 2
+  batch_size: 4
+  learning_rate: 2.0e-05
+  bf16: true
+  optim: adamw_torch
+  use_liger_kernel: false
+  logging_steps: 10
+  dataloader_num_workers: 4
+  dataloader_pin_memory: true
+  report_to: wandb
+  assistant_only_loss: true
+  remove_unused_columns: false
+  push_to_hub: false
+model:
+  model_name: pythia-70m
+  dtype: bfloat16
+  device_map: auto
+  for_training: true
+  hf_path: EleutherAI/pythia-70m
+  base_path: !!python/object/apply:pathlib._local.PosixPath
+  - /Users/jona/Documents/mdlm_sft
+  - artifacts
+  - weights
+  - ar
+  - base
+  - pythia-70m
+  checkpoints_path: !!python/object/apply:pathlib._local.PosixPath
+  - /Users/jona/Documents/mdlm_sft
+  - artifacts
+  - weights
+  - ar
+  - checkpoints
+  - pythia-70m
+  tokenizer_cache_path: !!python/object/apply:pathlib._local.PosixPath
+  - /Users/jona/Documents/mdlm_sft
+  - artifacts
+  - weights
+  - ar
+  - base
+  - pythia-70m
+  - tokenizer
+dataset:
+  dataset_key: wrp
+  num_samples: 10000
+  split: train
+  data_load_path: null
+  data_save_path: null

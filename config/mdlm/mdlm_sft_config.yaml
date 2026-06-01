@@ -1,0 +1,49 @@
+defaults:
+  - _self_
+  - model: mdlm-owt
+  - dataset: wrp
+
+# Hydra configuration - prevent directory changes
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+model:
+  model_name: mdlm-owt
+  tokenizer_name: gpt2
+  dtype: bfloat16
+  device_map: auto
+
+dataset:
+  dataset_key: wrp
+  num_train_samples: 3
+  num_test_samples: 1
+  max_length: 256
+
+training:
+  num_epochs: 1
+  batch_size: 2
+  learning_rate: 2e-5
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  grad_clip: 1.0
+  num_workers: 0
+  logging_steps: 1
+  seed: 42
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  scheduler: linear
+  loss_weight_type: uniform
+  time_epsilon: 0.001
+  eval_strategy: steps
+  eval_steps: 2
+  save_strategy: "no"  # Changed from false to "no"
+  report_to: [tensorboard]
+  batch_eval_metrics: true
+  remove_unused_columns: false
+  bf16: true
+
+checkpoint_name: null
+run_name: toy_run
+seed: 42

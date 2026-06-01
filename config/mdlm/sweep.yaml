@@ -1,0 +1,24 @@
+program: mdlm_sft.py
+method: grid                       # full, reproducible coverage at D2 scale
+metric:
+  name: eval/loss
+  goal: minimize
+
+parameters:
+  # --- locked from upstream stages (single-value -> fixed) ---
+  training.scheduler:
+    value: linear                  # locked at D0
+  training.adam_beta2:
+    value: 0.98                    # <- replace with D0a winner
+  training.loss_weight_type:
+    value: uniform                 # <- replace with D0b winner (uniform | scheduler)
+  training.time_epsilon:
+    value: 1.0e-4                  # <- replace with D1 winner
+  training.warmup_ratio:
+    value: 0.03                    # anchored, not under investigation
+
+  # --- D2 axes under investigation ---
+  training.weight_decay:
+    values: [0.0, 0.01, 0.1]       # the clean single axis at D2
+  training.learning_rate:
+    values: [1.0e-3, 2.0e-3]       # D1 optimum ± one step (replace with actual best)

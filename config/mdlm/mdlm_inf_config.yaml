@@ -1,0 +1,22 @@
+# Hydra configuration - prevent directory changes
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+# Model settings
+model_name: mdlm-owt
+checkpoint_name: toy_run
+
+# Dataset settings
+dataset_key: wrp
+split: test
+num_samples: 10
+
+# Generation settings
+response_length: 128
+num_steps: 50
+batch_size: 2
+
+# Output
+save_name: inference_results
