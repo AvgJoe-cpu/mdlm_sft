@@ -36,8 +36,8 @@ class ModelConfig:
 @dataclass
 class DatasetConfig:
     dataset_key: str = "wrp"
-    num_train_samples: int = -1
-    num_test_samples: int = -1
+    num_train_samples: int = 10000
+    num_test_samples: int = 1000
     max_length: int = 1024
 
     train_data_load_path: Optional[Path] = field(default=None, init=False)

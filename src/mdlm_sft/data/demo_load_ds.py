@@ -61,7 +61,7 @@ def main():
     print("█ 3/3: PROCESSING WRITING PROMPTS")
     print("█" * 80)
     try:
-        load_and_process_wrp(demo_size=10000, force_reprocess=False)
+        load_and_process_wrp(demo_size=15000, force_reprocess=True)
         print("\n✅ Writing Prompts processing complete!")
     except Exception as e:
         print(f"\n❌ Error processing Writing Prompts: {e}")

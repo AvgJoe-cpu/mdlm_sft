@@ -17,19 +17,19 @@ model:
 
 dataset:
   dataset_key: wrp
-  num_train_samples: 3
-  num_test_samples: 1
-  max_length: 256
+  num_train_samples: 10000
+  num_test_samples: 2500
+  max_length: 1024
 
 training:
-  num_epochs: 1
-  batch_size: 2
+  num_epochs: 4
+  batch_size: 64
   learning_rate: 2e-5
   warmup_ratio: 0.03
   weight_decay: 0.01
   grad_clip: 1.0
-  num_workers: 0
-  logging_steps: 1
+  num_workers: 4
+  logging_steps: 50
   seed: 42
   adam_beta1: 0.9
   adam_beta2: 0.999
@@ -37,7 +37,7 @@ training:
   loss_weight_type: uniform
   time_epsilon: 0.001
   eval_strategy: steps
-  eval_steps: 2
+  eval_steps: 100
   save_strategy: "no"  # Changed from false to "no"
   report_to: [tensorboard]
   batch_eval_metrics: true
