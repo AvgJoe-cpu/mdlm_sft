@@ -4,7 +4,6 @@ defaults:
   - dataset: wrp
   - _self_
 
-# Hydra configuration - prevent directory changes
 hydra:
   output_subdir: null
   run:
@@ -22,6 +21,8 @@ run_name: toy_run5
 
 dataset:
   dataset_key: wrp
+  train_data_load_path: ${ds_gen:mdlm,wrp,toy_run5/checkpoint-4,inference_results}
+  test_data_load_path:  ${ds_base:wrp,test}
   num_train_samples: 10
   num_test_samples: 25
   max_length: 1024

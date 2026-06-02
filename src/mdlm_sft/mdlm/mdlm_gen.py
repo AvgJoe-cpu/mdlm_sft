@@ -128,7 +128,7 @@ def generate_mdlm(
         )
         for b in range(out.shape[0])
     ]
-    return {"gen": decoded}
+    return {"completion": decoded}
 
 
 def run_inference(cfg: InferenceConfig) -> None:
