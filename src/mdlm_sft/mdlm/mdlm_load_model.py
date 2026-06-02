@@ -6,7 +6,7 @@ import torch
 from huggingface_hub import download_bucket_files
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 
-from .mdlm_config import MDLMModelConfig
+from .mdlm_config import ModelConfig
 
 
 def resize_mdlm_vocab(model, new_vocab: int) -> None:
@@ -46,7 +46,7 @@ def resize_mdlm_vocab(model, new_vocab: int) -> None:
     model.config.vocab_size = new_vocab
 
 
-def load_model_and_tokenizer(cfg: MDLMModelConfig):
+def load_model_and_tokenizer(cfg: ModelConfig):
     """
     Load the MDLM checkpoint + matching tokenizer, attach the chat template,
     add ChatML special tokens, then grow the model vocab to match.

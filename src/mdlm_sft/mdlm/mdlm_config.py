@@ -83,7 +83,7 @@ class TrainingConfig:
     eval_strategy: str = MISSING
     eval_steps: int = MISSING
     save_strategy: str = MISSING
-    report_to: List[str] = MISSING       # was field(default_factory=lambda: ["wandb"])
+    report_to: str = MISSING    
     batch_eval_metrics: bool = MISSING
     remove_unused_columns: bool = MISSING
     bf16: bool = MISSING

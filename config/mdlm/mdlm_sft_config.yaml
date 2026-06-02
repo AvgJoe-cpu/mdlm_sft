@@ -39,7 +39,7 @@ training:
   eval_strategy: steps
   eval_steps: 100
   save_strategy: "no"  # Changed from false to "no"
-  report_to: [tensorboard]
+  report_to: "wandb"
   batch_eval_metrics: true
   remove_unused_columns: false
   bf16: true
