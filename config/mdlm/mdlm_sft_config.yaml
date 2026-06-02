@@ -1,7 +1,7 @@
 defaults:
-  - _self_
   - model: mdlm-owt
   - dataset: wrp
+  - _self_
 
 # Hydra configuration - prevent directory changes
 hydra:

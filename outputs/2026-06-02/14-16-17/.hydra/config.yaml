@@ -1,0 +1,44 @@
+model:
+  model_name: ???
+  tokenizer_name: ???
+  dtype: ???
+  device_map: ???
+  hf_path: ${mdlm_model:${.model_name},hf-path}
+  base_path: ${mdlm_model:${.model_name},base_path}
+  checkpoints_path: ${mdlm_model:${.model_name},checkpoints_path}
+  tokenizer_cache_path: ${mdlm_model:${.model_name},base_path}/tokenizer
+dataset:
+  dataset_key: ???
+  num_train_samples: ???
+  num_test_samples: ???
+  max_length: ???
+  train_data_load_path: ${ds_base:${.dataset_key},train}
+  test_data_load_path: ${ds_base:${.dataset_key},test}
+training:
+  num_epochs: ???
+  batch_size: ???
+  learning_rate: ???
+  warmup_ratio: ???
+  weight_decay: ???
+  grad_clip: ???
+  num_workers: ???
+  logging_steps: ???
+  seed: ???
+  adam_beta1: ???
+  adam_beta2: ???
+  scheduler: ???
+  loss_weight_type: ???
+  time_epsilon: ???
+  eval_strategy: ???
+  eval_steps: ???
+  save_strategy: ???
+  report_to: ???
+  batch_eval_metrics: ???
+  remove_unused_columns: ???
+  bf16: ???
+checkpoint_name: ???
+run_name: ???
+seed: ???
+model_load_path: ${mdlm_load_path:${.model.model_name},${.checkpoint_name}}
+model_save_path: ${mdlm_save_path:${.model.model_name},${.checkpoint_name},${.run_name},${.dataset.dataset_key}}
+tensorboard_log_dir: ${.model_save_path}/logs

@@ -1,89 +1,102 @@
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from hydra.core.config_store import ConfigStore
-from omegaconf import MISSING            # <-- added
+from omegaconf import MISSING, OmegaConf
 
-from ..paths import MDLM_MODELS, DATASETS, DATASET_BASE_DIR
+from ..paths import MDLM_MODELS, DATASET_BASE_DIR
 
 
 # ============================================================ #
-# Shared cores (used by BOTH training and inference)
+# Custom OmegaConf resolvers (the ONLY place paths are derived)
+# ============================================================ #
+def _model_field(model_name: str, key: str) -> str:
+    return str(MDLM_MODELS[model_name][key])
+
+
+def _ds_base(dataset_key: str, split: str) -> str:
+    return str(DATASET_BASE_DIR / dataset_key / split)
+
+
+def _model_load_path(model_name: str, checkpoint_name: Optional[str]) -> str:
+    info = MDLM_MODELS[model_name]
+    if checkpoint_name:
+        return str(info["checkpoints_path"] / checkpoint_name)
+    return str(info["base_path"])
+
+
+def _model_save_path(
+    model_name: str,
+    checkpoint_name: Optional[str],
+    run_name: Optional[str],
+    dataset_key: str,
+) -> str:
+    info = MDLM_MODELS[model_name]
+    if run_name:
+        save_name = run_name
+    elif checkpoint_name:
+        save_name = f"{checkpoint_name}_continued"
+    else:
+        save_name = f"{dataset_key}_sft"
+    return str(info["checkpoints_path"] / save_name)
+
+
+OmegaConf.register_new_resolver("mdlm_model", _model_field, replace=True)
+OmegaConf.register_new_resolver("ds_base", _ds_base, replace=True)
+OmegaConf.register_new_resolver("mdlm_load_path", _model_load_path, replace=True)
+OmegaConf.register_new_resolver("mdlm_save_path", _model_save_path, replace=True)
+
+
+# ============================================================ #
+# Schema (type-checker only -- input defaults come from YAML,
+#          derived paths come from resolvers above)
 # ============================================================ #
 @dataclass
 class ModelConfig:
-    """Model + tokenizer location. Paths resolved from MDLM_MODELS."""
-    model_name: str = MISSING          # was "mdlm-owt"
-    tokenizer_name: str = MISSING      # was "gpt2"
-    dtype: str = MISSING               # was "bfloat16"
-    device_map: str = MISSING          # was "auto"
+    model_name: str = MISSING
+    tokenizer_name: str = MISSING
+    dtype: str = MISSING
+    device_map: str = MISSING
 
-    # derived (NOT user inputs) -- unchanged
-    hf_path: Optional[str] = field(default=None, init=False)
-    base_path: Optional[Path] = field(default=None, init=False)
-    checkpoints_path: Optional[Path] = field(default=None, init=False)
-    tokenizer_cache_path: Optional[Path] = field(default=None, init=False)
-
-    def __post_init__(self):
-        if self.model_name not in MDLM_MODELS:
-            raise ValueError(f"Unknown model '{self.model_name}'. Choices: {list(MDLM_MODELS)}")
-        info = MDLM_MODELS[self.model_name]
-        self.hf_path = info["hf-path"]
-        self.base_path = info["base_path"]
-        self.checkpoints_path = info["checkpoints_path"]
-        self.tokenizer_cache_path = self.base_path / "tokenizer"
+    # derived (resolved from MDLM_MODELS via interpolation)
+    hf_path: str = "${mdlm_model:${.model_name},hf-path}"
+    base_path: str = "${mdlm_model:${.model_name},base_path}"
+    checkpoints_path: str = "${mdlm_model:${.model_name},checkpoints_path}"
+    tokenizer_cache_path: str = "${mdlm_model:${.model_name},base_path}/tokenizer"
 
 
 @dataclass
 class DatasetConfig:
-    dataset_key: str = MISSING             # was "wrp"
-    num_train_samples: int = MISSING       # was 10000
-    num_test_samples: int = MISSING        # was 1000
-    max_length: int = MISSING              # was 1024
+    dataset_key: str = MISSING
+    num_train_samples: int = MISSING
+    num_test_samples: int = MISSING
+    max_length: int = MISSING
 
-    # derived (NOT user inputs) -- unchanged
-    train_data_load_path: Optional[Path] = field(default=None, init=False)
-    test_data_load_path: Optional[Path] = field(default=None, init=False)
-
-    def __post_init__(self):
-        if self.dataset_key not in DATASETS:
-            raise ValueError(f"Unknown dataset '{self.dataset_key}'. Choices: {list(DATASETS)}")
-        base = DATASET_BASE_DIR / self.dataset_key
-        self.train_data_load_path = base / "train"
-        self.test_data_load_path = base / "test"
+    # derived
+    train_data_load_path: str = "${ds_base:${.dataset_key},train}"
+    test_data_load_path: str = "${ds_base:${.dataset_key},test}"
 
 
-# ============================================================ #
-# TRAINING
-# ============================================================ #
 @dataclass
 class TrainingConfig:
-    """Training hyperparameters (this is what a sweep varies)."""
     num_epochs: int = MISSING
     batch_size: int = MISSING
     learning_rate: float = MISSING
     warmup_ratio: float = MISSING
     weight_decay: float = MISSING
     grad_clip: float = MISSING
-
     num_workers: int = MISSING
     logging_steps: int = MISSING
     seed: int = MISSING
-
     adam_beta1: float = MISSING
     adam_beta2: float = MISSING
-
-    # MDLM-specific
     scheduler: str = MISSING
     loss_weight_type: str = MISSING
     time_epsilon: float = MISSING
-
-    # eval / save / reporting
     eval_strategy: str = MISSING
     eval_steps: int = MISSING
     save_strategy: str = MISSING
-    report_to: str = MISSING    
+    report_to: str = MISSING
     batch_eval_metrics: bool = MISSING
     remove_unused_columns: bool = MISSING
     bf16: bool = MISSING
@@ -91,64 +104,21 @@ class TrainingConfig:
 
 @dataclass
 class TrainConfig:
-    """A complete training run."""
-    # composition factories -- unchanged
     model: ModelConfig = field(default_factory=ModelConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
-    checkpoint_name: Optional[str] = MISSING   # was None
-    run_name: Optional[str] = MISSING          # was None
-    seed: int = MISSING                        # was 42
+    checkpoint_name: Optional[str] = MISSING
+    run_name: Optional[str] = MISSING
+    seed: int = MISSING
 
-    # derived (NOT user inputs) -- unchanged
-    model_load_path: Optional[str] = field(default=None, init=False)
-    model_save_path: Optional[Path] = field(default=None, init=False)
-    tensorboard_log_dir: Optional[Path] = field(default=None, init=False)
-
-    def __post_init__(self):
-        ckpts = self.model.checkpoints_path
-        if self.checkpoint_name:
-            self.model_load_path = str(ckpts / self.checkpoint_name)
-            save_name = self.run_name or f"{self.checkpoint_name}_continued"
-        else:
-            self.model_load_path = str(self.model.base_path)
-            save_name = self.run_name or f"{self.dataset.dataset_key}_sft"
-        self.model_save_path = ckpts / save_name
-        self.tensorboard_log_dir = self.model_save_path / "logs"
-
-
-# ============================================================ #
-# INFERENCE  (left unchanged on purpose -- no YAML feeds these)
-# ============================================================ #
-@dataclass
-class InferenceConfig:
-    """MDLM sampling / generation parameters."""
-    num_sample_steps: int = 128
-    seq_len: int = 256
-    temperature: float = 1.0
-    top_p: float = 1.0
-    num_samples: int = 16
-    batch_size: int = 16
-    seed: int = 42
-
-
-@dataclass
-class InferConfig:
-    """A complete inference run."""
-    model: ModelConfig = field(default_factory=ModelConfig)
-    inference: InferenceConfig = field(default_factory=InferenceConfig)
-
-    checkpoint_name: Optional[str] = None
-    output_dir: Optional[str] = None
-
-    model_load_path: Optional[str] = field(default=None, init=False)
-
-    def __post_init__(self):
-        self.model_load_path = str(
-            self.model.checkpoints_path / self.checkpoint_name
-            if self.checkpoint_name else self.model.base_path
-        )
+    # derived
+    model_load_path: str = "${mdlm_load_path:${.model.model_name},${.checkpoint_name}}"
+    model_save_path: str = (
+        "${mdlm_save_path:${.model.model_name},${.checkpoint_name},"
+        "${.run_name},${.dataset.dataset_key}}"
+    )
+    tensorboard_log_dir: str = "${.model_save_path}/logs"
 
 
 # ============================================================ #
@@ -157,9 +127,6 @@ class InferConfig:
 def register_configs() -> None:
     cs = ConfigStore.instance()
     cs.store(name="mdlm_train_config", node=TrainConfig)
-    cs.store(name="mdlm_infer_config", node=InferConfig)
-
     cs.store(group="model", name="mdlm-owt", node=ModelConfig(model_name="mdlm-owt"))
-
     for key in ("wrp", "alp", "tis"):
         cs.store(group="dataset", name=key, node=DatasetConfig(dataset_key=key))
