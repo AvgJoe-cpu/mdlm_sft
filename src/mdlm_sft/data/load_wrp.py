@@ -2,7 +2,7 @@
 
 from datasets import load_dataset
 from transformers import AutoTokenizer
-from mdlm_sft.paths import DATASETS, resolve_dataset_base_path
+from mdlm_sft.paths import DATASETS
 from .shared import add_hash_id, count_tokens
 
 
@@ -27,9 +27,13 @@ def load_and_process_wrp(demo_size=10000, force_reprocess=False):
     """
     dataset_key = "wrp"
     
-    # Resolve the base path
+    # Resolve the base path. This script is the *producer* of the base
+    # dataset, so reference the path directly from DATASETS and create it.
+    # (resolve_dataset_base_path is consumer-side: it raises if the dir is
+    # missing, which would make a fresh clone impossible to bootstrap.)
+    base_path = DATASETS[dataset_key]["base_path"]
+    base_path.mkdir(parents=True, exist_ok=True)
     print(f"\nResolving dataset base path for '{dataset_key}':")
-    base_path = resolve_dataset_base_path(dataset_key)
     print(f"Save location: {base_path}")
     print(f"Dataset: {DATASETS[dataset_key]['name']}")
     
