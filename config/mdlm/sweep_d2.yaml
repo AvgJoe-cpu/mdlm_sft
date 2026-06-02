@@ -5,13 +5,15 @@
 #   wandb sweep config/mdlm/sweep_d2.yaml
 #   wandb agent <entity>/<project>/<sweep_id>
 #
-# The `command` block emits Hydra-style overrides (key=value, no `--`)
-# via ${args_no_hyphens}, so @hydra.main composes them directly into the
+# The `command` block runs the training entrypoint as a *module*
+# (python -m mdlm_sft.mdlm.mdlm_sft) so package-relative imports work,
+# and emits Hydra-style overrides (key=value, no `--`) via
+# ${args_no_hyphens}, so @hydra.main composes them directly into the
 # config. save_strategy is forced to "no" so concurrent sweep jobs don't
 # write into (and clobber) the same checkpoints dir -- we discard models
 # during sweeps anyway.
 # ============================================================ #
-program: mdlm_sft.py
+program: mdlm_sft.mdlm.mdlm_sft
 method: grid                       # full, reproducible coverage at D2 scale
 metric:
   name: eval/loss
@@ -20,7 +22,8 @@ metric:
 command:
   - ${env}
   - python
-  - ${program}
+  - -m
+  - ${program}                    # python -m mdlm_sft.mdlm.mdlm_sft
   - ${args_no_hyphens}            # Hydra-style overrides: key=value (no --)
 
 parameters:
