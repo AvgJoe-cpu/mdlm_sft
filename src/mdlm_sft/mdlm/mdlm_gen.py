@@ -1,62 +1,84 @@
 import gc
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
 import hydra
-from omegaconf import DictConfig, OmegaConf
+from hydra.core.config_store import ConfigStore
+from omegaconf import DictConfig, OmegaConf, MISSING
 from datasets import load_from_disk
 
 from .mdlm_load_model import load_model_and_tokenizer
-from .mdlm_config import MDLMModelConfig
+from .mdlm_config import ModelConfig, register_configs
 from .mdlm_helpers.mdlm_sampler_sft import (
     MinimalMDLMSampler,
     SFTMixinBatchedVarlen,
 )
-from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler  # Add this line
-from ..paths import MDLM_CONFIG_DIR, MDLM_MODELS, DATASET_BASE_DIR
+from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
+from ..paths import MDLM_CONFIG_DIR, DATASET_GEN_DIR
 
 
+# ============================================================ #
+# Inference-local resolver (the ONLY place the gen output
+# path is derived). Layout:
+#   artifacts/datasets/gen/<model_type>/<dataset>/<run>/<save_name>
+# ============================================================ #
+def _gen_out(model_type: str, dataset_key: str, run_name: str, save_name: str) -> str:
+    return str(DATASET_GEN_DIR / model_type / dataset_key / run_name / save_name)
+
+
+OmegaConf.register_new_resolver("mdlm_gen_out", _gen_out, replace=True)
+
+
+# Runtime-only container handed to the sampler (always built from cfg values).
 @dataclass
 class MDLMSamplerConfig:
     """Configuration for MDLM sampling"""
-    response_length: int = 256
-    num_steps: int = 100
+    response_length: int
+    num_steps: int
 
 
+# ============================================================ #
+# Schema (type-checker only -- defaults come from YAML,
+#          derived paths come from resolvers/interpolation)
+# ============================================================ #
 @dataclass
 class InferenceConfig:
     """Configuration for MDLM inference"""
-    # Model settings
-    model_name: str = "mdlm-owt"
-    checkpoint_name: str = "toy_run"  # Name of checkpoint to load
-    
-    # Dataset settings
-    dataset_key: str = "wrp"
-    split: str = "test"  # Which split to run inference on
-    num_samples: int = 10
-    
-    # Generation settings
-    response_length: int = 256
-    num_steps: int = 100
-    batch_size: int = 4
-    
-    # Output
-    save_name: str = "inference_results"
-    
-    def __post_init__(self):
-        """Resolve paths"""
-        model_info = MDLM_MODELS[self.model_name]
-        
-        # Model path
-        self.model_path = model_info["checkpoints_path"] / self.checkpoint_name
-        
-        # Input dataset path
-        self.input_path = DATASET_BASE_DIR / self.dataset_key / self.split
-        
-        # Output path
-        self.output_path = model_info["checkpoints_path"] / self.checkpoint_name / "inference" / self.save_name
+    # reused model block: provides model_name/tokenizer/dtype + derived
+    # base_path / hf_path / tokenizer_cache_path / checkpoints_path
+    model: ModelConfig = field(default_factory=ModelConfig)
+
+    # inputs
+    checkpoint_name: str = MISSING
+    dataset_key: str = MISSING
+    split: str = MISSING
+    num_samples: int = MISSING
+
+    # generation
+    response_length: int = MISSING
+    num_steps: int = MISSING
+    batch_size: int = MISSING
+
+    # output
+    save_name: str = MISSING
+
+    # derived (no new path math in code)
+    model_path: str = "${.model.checkpoints_path}/${.checkpoint_name}"
+    input_path: str = "${ds_base:${.dataset_key},${.split}}"
+    output_path: str = "${mdlm_gen_out:mdlm,${.dataset_key},${.checkpoint_name},${.save_name}}"
+
+
+def register_inf_configs() -> None:
+    # Reuse shared registration: registers the `model` group + the OmegaConf
+    # resolvers (mdlm_model / ds_base) at mdlm_config import time.
+    register_configs()
+    cs = ConfigStore.instance()
+    cs.store(name="mdlm_infer_config", node=InferenceConfig)
+
+
+register_inf_configs()
 
 
 def generate_mdlm(
@@ -64,7 +86,7 @@ def generate_mdlm(
     tokenizer=None,
     model=None,
     sampler=None,
-    config: MDLMSamplerConfig = MDLMSamplerConfig(),
+    config: MDLMSamplerConfig = None,
 ):
     """Generate responses for a batch of prompts"""
     messages_list = [[{"role": "user", "content": p}] for p in batch["prompt"]]
@@ -78,7 +100,7 @@ def generate_mdlm(
         padding=True,
         truncation=True,
     )
-    
+
     # Match model dtype
     model_dtype = next(model.parameters()).dtype
     prompt_ids = encoded["input_ids"].to(model.device)
@@ -110,41 +132,45 @@ def generate_mdlm(
 
 
 def run_inference(cfg: InferenceConfig) -> None:
-    """Execute MDLM inference"""
-    
+    """Execute MDLM inference with pre-resolved configuration"""
+
+    # Derived paths arrive as strings (OmegaConf interpolation) -> wrap.
+    model_path = Path(cfg.model_path)
+    input_path = Path(cfg.input_path)
+    output_path = Path(cfg.output_path)
+
     print("=" * 60)
     print("MDLM Inference")
     print("=" * 60)
-    print(f"Model: {cfg.model_path}")
-    print(f"Input: {cfg.input_path}")
-    print(f"Output: {cfg.output_path}")
+    print(f"Model: {model_path}")
+    print(f"Input: {input_path}")
+    print(f"Output: {output_path}")
     print(f"Samples: {cfg.num_samples}")
     print(f"Response length: {cfg.response_length}")
     print(f"Steps: {cfg.num_steps}")
     print("=" * 60)
-    
-    # Load model
-    model_cfg = MDLMModelConfig(model_name=cfg.model_name)
-    model, tokenizer = load_model_and_tokenizer(model_cfg)
-    
+
+    # Load model (same path as training)
+    model, tokenizer = load_model_and_tokenizer(cfg.model)
+
     # Load checkpoint if specified
     if cfg.checkpoint_name:
-        checkpoint_path = cfg.model_path / "pytorch_model.bin"
+        checkpoint_path = model_path / "pytorch_model.bin"
         if checkpoint_path.exists():
             print(f"Loading checkpoint: {checkpoint_path}")
             state_dict = torch.load(checkpoint_path, map_location=model.device)
             model.load_state_dict(state_dict)
         else:
             print(f"Warning: Checkpoint not found at {checkpoint_path}, using base model")
-    
+
     model.eval()
-    
+
     # Setup sampler
     sampler_config = MDLMSamplerConfig(
         response_length=cfg.response_length,
         num_steps=cfg.num_steps,
     )
-    
+
     sampler = MinimalMDLMSampler(
         backbone=model,
         scheduler=LinearAlphaScheduler(),
@@ -153,12 +179,12 @@ def run_inference(cfg: InferenceConfig) -> None:
     sampler.sample_sft = SFTMixinBatchedVarlen.sample_sft.__get__(
         sampler, type(sampler)
     )
-    
+
     # Load dataset
-    print(f"Loading dataset from: {cfg.input_path}")
-    ds = load_from_disk(str(cfg.input_path))
+    print(f"Loading dataset from: {input_path}")
+    ds = load_from_disk(str(input_path))
     ds = ds.select(range(min(cfg.num_samples, len(ds))))
-    
+
     print(f"Running inference on {len(ds)} samples...")
     ds = ds.map(
         generate_mdlm,
@@ -171,14 +197,14 @@ def run_inference(cfg: InferenceConfig) -> None:
             "config": sampler_config,
         },
     )
-    
+
     # Save results
-    cfg.output_path.mkdir(parents=True, exist_ok=True)
-    print(f"Saving results to: {cfg.output_path}")
-    ds.save_to_disk(str(cfg.output_path))
-    
+    output_path.mkdir(parents=True, exist_ok=True)
+    print(f"Saving results to: {output_path}")
+    ds.save_to_disk(str(output_path))
+
     print("✓ Inference complete!")
-    
+
     # Cleanup
     del model, tokenizer, sampler, sampler_config, ds
     gc.collect()
@@ -193,21 +219,9 @@ def main(cfg: DictConfig) -> None:
     print("=" * 60)
     print(OmegaConf.to_yaml(cfg))
     print("=" * 60)
-    
-    # Convert to structured config
-    inference_cfg = InferenceConfig(
-        model_name=cfg.model_name,
-        checkpoint_name=cfg.checkpoint_name,
-        dataset_key=cfg.dataset_key,
-        split=cfg.split,
-        num_samples=cfg.num_samples,
-        response_length=cfg.response_length,
-        num_steps=cfg.num_steps,
-        batch_size=cfg.batch_size,
-        save_name=cfg.save_name,
-    )
-    
-    run_inference(inference_cfg)
+
+    run_cfg: InferenceConfig = OmegaConf.to_object(cfg)
+    run_inference(run_cfg)
 
 
 if __name__ == "__main__":
