@@ -23,8 +23,8 @@ dataset:
   dataset_key: wrp
   train_data_load_path: ${ds_base:wrp,train}
   test_data_load_path:  ${ds_base:wrp,validation}
-  num_train_samples: 10
-  num_test_samples: 25
+  num_train_samples: 10000
+  num_test_samples: 2500
   max_length: 1024
 
 training:
