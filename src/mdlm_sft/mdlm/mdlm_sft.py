@@ -130,7 +130,7 @@ def run_training(cfg: TrainConfig) -> None:
     gc.collect()
 
 
-@hydra.main(version_base=None, config_path=str(MDLM_CONFIG_DIR), config_name="mdlm_train_config")
+@hydra.main(version_base=None, config_path=str(MDLM_CONFIG_DIR), config_name="mdlm_sft_config")
 def main(cfg: DictConfig) -> None:
     os.chdir(hydra.utils.get_original_cwd())  # Hydra changes cwd
 

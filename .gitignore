@@ -220,3 +220,7 @@ __marimo__/
 # Artifacts directory (except .gitkeep files)
 artifacts/**/*
 !artifacts/**/.gitkeep
+
+wandb
+# Hydra output directory
+output/

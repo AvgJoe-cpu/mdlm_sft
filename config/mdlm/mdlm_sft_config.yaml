@@ -1,4 +1,5 @@
 defaults:
+  - mdlm_train_config   #
   - model: mdlm-owt
   - dataset: wrp
   - _self_
@@ -10,20 +11,20 @@ hydra:
     dir: .
 
 model:
-  model_name: mdlm-owt
+  model_name: mdlm-owt/toy_run3/checkpoint-4
   tokenizer_name: gpt2
   dtype: bfloat16
   device_map: auto
 
 dataset:
   dataset_key: wrp
-  num_train_samples: 10000
-  num_test_samples: 2500
+  num_train_samples: 10
+  num_test_samples: 25
   max_length: 1024
 
 training:
   num_epochs: 4
-  batch_size: 64
+  batch_size: 16
   learning_rate: 2e-5
   warmup_ratio: 0.03
   weight_decay: 0.01
@@ -38,12 +39,12 @@ training:
   time_epsilon: 0.001
   eval_strategy: steps
   eval_steps: 100
-  save_strategy: "no"  # Changed from false to "no"
+  save_strategy: "epoch"  # Changed from false to "no"
   report_to: "wandb"
   batch_eval_metrics: true
   remove_unused_columns: false
   bf16: true
 
 checkpoint_name: null
-run_name: toy_run
+run_name: toy_run3
 seed: 42
