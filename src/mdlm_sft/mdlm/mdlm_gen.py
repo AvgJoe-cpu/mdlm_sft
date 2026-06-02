@@ -159,6 +159,7 @@ def run_inference(cfg: InferenceConfig) -> None:
         load_path=str(model_path),
         is_checkpoint=True,
     )
+    model.to("cuda" if torch.cuda.is_available() else "cpu")
 
     model.eval()
 

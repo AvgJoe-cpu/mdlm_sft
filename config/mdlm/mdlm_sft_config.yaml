@@ -44,7 +44,7 @@ training:
   time_epsilon: 0.001
   eval_strategy: steps
   eval_steps: 50
-  save_strategy: "none"  # Changed from false to "no"
+  save_strategy: "epochs"  # Changed from false to "no"
   report_to: "wandb"
   batch_eval_metrics: true
   remove_unused_columns: false
