@@ -1,20 +1,5 @@
-# ============================================================ #
-# W&B sweep: D2 axes (learning_rate x weight_decay), grid.
-#
-# Run:
-#   wandb sweep config/mdlm/sweep_d2.yaml
-#   wandb agent <entity>/<project>/<sweep_id>
-#
-# The `command` block runs the training entrypoint as a *module*
-# (python -m mdlm_sft.mdlm.mdlm_sft) so package-relative imports work,
-# and emits Hydra-style overrides (key=value, no `--`) via
-# ${args_no_hyphens}, so @hydra.main composes them directly into the
-# config. save_strategy is forced to "no" so concurrent sweep jobs don't
-# write into (and clobber) the same checkpoints dir -- we discard models
-# during sweeps anyway.
-# ============================================================ #
 program: mdlm_sft.mdlm.mdlm_sft
-method: grid                       # full, reproducible coverage at D2 scale
+method: bayes                       # grid would explode (6 axes); bayes converges efficiently
 metric:
   name: eval/loss
   goal: minimize
@@ -23,29 +8,56 @@ command:
   - ${env}
   - python
   - -m
-  - ${program}                    # python -m mdlm_sft.mdlm.mdlm_sft
-  - ${args_no_hyphens}            # Hydra-style overrides: key=value (no --)
+  - ${program}                      # python -m mdlm_sft.mdlm.mdlm_sft
+  - ${args_no_hyphens}              # Hydra-style overrides: key=value (no --)
 
 parameters:
-  # --- locked from upstream stages (single-value -> fixed) ---
-  training.scheduler:
-    value: linear                  # locked at D0
-  training.adam_beta2:
-    value: 0.98                    # locked from D0a
-  training.loss_weight_type:
-    value: uniform                 # locked from D0b
-  training.time_epsilon:
-    value: 1.0e-4                  # locked from D1
-  training.warmup_ratio:
-    value: 0.03                    # anchored, not under investigation
-
   # --- discard checkpoints during the sweep (no model saved) ---
   training.save_strategy:
-    value: "no"                    # avoid jobs fighting over the checkpoints dir
+    value: "no"                     # avoid jobs fighting over the checkpoints dir
+
+  # --- fixed optimizer/runtime params (not under investigation) ---
+  training.adam_beta1:
+    value: 0.9
+  training.grad_clip:
+    value: 1.0
+  training.bf16:
+    value: true
 
   # --- D2 axes under investigation ---
-  training.learning_rate:
-    values: [5.0e-4, 1.0e-3, 2.0e-3]       # expanded lower bound to catch potential instability causes
 
+  # Learning rate: from-scratch needs a higher/wider band than SFT.
+  # Log-uniform so the sampler spends equal effort per order of magnitude.
+  training.learning_rate:
+    distribution: log_uniform_values
+    min: 1.0e-4
+    max: 2.0e-3
+
+  # Weight decay: tight spacing around the usual sweet spot.
   training.weight_decay:
-    values: [0.0, 0.01, 0.05]              # tighter spacing; removed 0.1 as too aggressive
+    values: [0.0, 0.01, 0.05]
+
+  # Warmup: from-scratch is sensitive to early instability, so probe a bit wider.
+  training.warmup_ratio:
+    values: [0.01, 0.03, 0.06]
+
+  # Adam beta2: 0.98 stabilizes early training; 0.999 is the classic default.
+  training.adam_beta2:
+    values: [0.98, 0.999]
+
+  # t-parameter (time_epsilon): controls the lower bound of the noise schedule.
+  # Sweep across orders of magnitude.
+  training.time_epsilon:
+    values: [1.0e-5, 1.0e-4, 1.0e-3]
+
+  # Noise schedule.
+  training.scheduler:
+    values: [linear, cosine]
+
+  # Loss weighting across timesteps.
+  training.loss_weight_type:
+    values: [uniform, scheduler]
+
+  # Reproducibility (single value -> fixed)
+  seed:
+    value: 42

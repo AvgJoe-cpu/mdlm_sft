@@ -31,17 +31,17 @@ training:
   num_epochs: 1
   batch_size: 64
   learning_rate: 2e-5
-  warmup_ratio: 0.03
-  weight_decay: 0.01
+  warmup_ratio: 0.03 # check
+  weight_decay: 0.01 # check 
   grad_clip: 1.0
   num_workers: 4
   logging_steps: 10
   seed: 42
   adam_beta1: 0.9
   adam_beta2: 0.999
-  scheduler: linear
-  loss_weight_type: uniform
-  time_epsilon: 0.001
+  scheduler: linear # or cosine 
+  loss_weight_type: uniform # or scheduler 
+  time_epsilon: 0.001 # sweep range  
   eval_strategy: steps
   eval_steps: 50
   save_strategy: "epochs"  # Changed from false to "no"
