@@ -123,4 +123,4 @@ def load_and_process_wrp(demo_size=10000, force_reprocess=False):
 
 
 if __name__ == "__main__":
-    load_and_process_wrp(demo_size=10000)
+    load_and_process_wrp(demo_size=200000)
