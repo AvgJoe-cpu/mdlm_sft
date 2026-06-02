@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Artifacts directory (except .gitkeep files)
+artifacts/**/*
+!artifacts/**/.gitkeep
