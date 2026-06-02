@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from hydra.core.config_store import ConfigStore
+from omegaconf import MISSING            # <-- added
 
 from ..paths import MDLM_MODELS, DATASETS, DATASET_BASE_DIR
 
@@ -13,11 +14,12 @@ from ..paths import MDLM_MODELS, DATASETS, DATASET_BASE_DIR
 @dataclass
 class ModelConfig:
     """Model + tokenizer location. Paths resolved from MDLM_MODELS."""
-    model_name: str = "mdlm-owt"
-    tokenizer_name: str = "gpt2"
-    dtype: str = "bfloat16"
-    device_map: str = "auto"
+    model_name: str = MISSING          # was "mdlm-owt"
+    tokenizer_name: str = MISSING      # was "gpt2"
+    dtype: str = MISSING               # was "bfloat16"
+    device_map: str = MISSING          # was "auto"
 
+    # derived (NOT user inputs) -- unchanged
     hf_path: Optional[str] = field(default=None, init=False)
     base_path: Optional[Path] = field(default=None, init=False)
     checkpoints_path: Optional[Path] = field(default=None, init=False)
@@ -35,11 +37,12 @@ class ModelConfig:
 
 @dataclass
 class DatasetConfig:
-    dataset_key: str = "wrp"
-    num_train_samples: int = 10000
-    num_test_samples: int = 1000
-    max_length: int = 1024
+    dataset_key: str = MISSING             # was "wrp"
+    num_train_samples: int = MISSING       # was 10000
+    num_test_samples: int = MISSING        # was 1000
+    max_length: int = MISSING              # was 1024
 
+    # derived (NOT user inputs) -- unchanged
     train_data_load_path: Optional[Path] = field(default=None, init=False)
     test_data_load_path: Optional[Path] = field(default=None, init=False)
 
@@ -57,46 +60,48 @@ class DatasetConfig:
 @dataclass
 class TrainingConfig:
     """Training hyperparameters (this is what a sweep varies)."""
-    num_epochs: int = 6
-    batch_size: int = 64
-    learning_rate: float = 2e-5
-    warmup_ratio: float = 0.03
-    weight_decay: float = 0.01
-    grad_clip: float = 1.0
+    num_epochs: int = MISSING
+    batch_size: int = MISSING
+    learning_rate: float = MISSING
+    warmup_ratio: float = MISSING
+    weight_decay: float = MISSING
+    grad_clip: float = MISSING
 
-    num_workers: int = 4
-    logging_steps: int = 20
-    seed: int = 42
+    num_workers: int = MISSING
+    logging_steps: int = MISSING
+    seed: int = MISSING
 
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
+    adam_beta1: float = MISSING
+    adam_beta2: float = MISSING
 
     # MDLM-specific
-    scheduler: str = "linear"
-    loss_weight_type: str = "uniform"
-    time_epsilon: float = 0.001
+    scheduler: str = MISSING
+    loss_weight_type: str = MISSING
+    time_epsilon: float = MISSING
 
     # eval / save / reporting
-    eval_strategy: str = "steps"
-    eval_steps: int = 50
-    save_strategy: str = "no"
-    report_to: List[str] = field(default_factory=lambda: ["wandb"])
-    batch_eval_metrics: bool = True
-    remove_unused_columns: bool = False
-    bf16: bool = True
+    eval_strategy: str = MISSING
+    eval_steps: int = MISSING
+    save_strategy: str = MISSING
+    report_to: List[str] = MISSING       # was field(default_factory=lambda: ["wandb"])
+    batch_eval_metrics: bool = MISSING
+    remove_unused_columns: bool = MISSING
+    bf16: bool = MISSING
 
 
 @dataclass
 class TrainConfig:
     """A complete training run."""
+    # composition factories -- unchanged
     model: ModelConfig = field(default_factory=ModelConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
-    checkpoint_name: Optional[str] = None
-    run_name: Optional[str] = None
-    seed: int = 42
+    checkpoint_name: Optional[str] = MISSING   # was None
+    run_name: Optional[str] = MISSING          # was None
+    seed: int = MISSING                        # was 42
 
+    # derived (NOT user inputs) -- unchanged
     model_load_path: Optional[str] = field(default=None, init=False)
     model_save_path: Optional[Path] = field(default=None, init=False)
     tensorboard_log_dir: Optional[Path] = field(default=None, init=False)
@@ -114,7 +119,7 @@ class TrainConfig:
 
 
 # ============================================================ #
-# INFERENCE
+# INFERENCE  (left unchanged on purpose -- no YAML feeds these)
 # ============================================================ #
 @dataclass
 class InferenceConfig:
