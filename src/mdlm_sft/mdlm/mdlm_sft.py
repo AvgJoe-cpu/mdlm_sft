@@ -18,8 +18,6 @@ from .mdlm_helpers.mdlm_trainer_sft import (
 from .mdlm_load_model import load_model_and_tokenizer
 from ..paths import MDLM_CONFIG_DIR
 
-import wandb
-
 register_configs()
 
 
@@ -129,7 +127,7 @@ def run_training(cfg: TrainConfig) -> None:
     )
 
     trainer.train()
-    print(f"✓ Training complete. Model saved to: {cfg.model_save_path}")
+    print(f"\u2713 Training complete. Model saved to: {cfg.model_save_path}")
 
     del trainer, args, collator, scheduler, train_ds, test_ds, model, tokenizer
     if torch.cuda.is_available():
@@ -148,14 +146,10 @@ def main(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg))
     print("=" * 60)
 
-    def _apply_wandb_overrides(cfg):
-        """Write flat wandb.config keys (e.g. 'training.learning_rate') into cfg."""
-        if not wandb.run:
-            return cfg
-        for dotted, value in wandb.config.items():
-            OmegaConf.update(cfg, dotted, value, force_add=True)
-        return cfg
-
+    # W&B sweeps pass hyperparameters as Hydra-style CLI overrides
+    # (key=value, via ${args_no_hyphens} in the sweep command), so they are
+    # already composed into `cfg` here -- no manual wandb.config bridging
+    # needed. The HF Trainer (report_to=wandb) handles wandb.init/logging.
     run_cfg: TrainConfig = OmegaConf.to_object(cfg)
 
     run_training(run_cfg)
