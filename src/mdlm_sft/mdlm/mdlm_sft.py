@@ -36,8 +36,15 @@ def format_to_messages(example):
 def run_training(cfg: TrainConfig) -> None:
     """Execute MDLM training run with pre-resolved configuration"""
 
+    # When checkpoint_name is set we warm-start from a self-contained trained
+    # checkpoint (weights + tokenizer); otherwise we build the base model.
+    # Either way this is a *fresh* run (new optimizer/scheduler/dataset).
     print(f"Loading model from: {cfg.model_load_path}")
-    model, tokenizer = load_model_and_tokenizer(cfg.model)
+    model, tokenizer = load_model_and_tokenizer(
+        cfg.model,
+        load_path=cfg.model_load_path,
+        is_checkpoint=bool(cfg.checkpoint_name),
+    )
 
     def _sft_map_fn(example, tokenizer, max_length):
         enc = tokenizer.apply_chat_template(

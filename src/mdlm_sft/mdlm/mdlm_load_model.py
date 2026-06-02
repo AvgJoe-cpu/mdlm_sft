@@ -46,15 +46,43 @@ def resize_mdlm_vocab(model, new_vocab: int) -> None:
     model.config.vocab_size = new_vocab
 
 
-def load_model_and_tokenizer(cfg: ModelConfig):
+def _convert_to_bfloat16(model, dtype: str):
+    """Convert model to bfloat16 when requested and supported."""
+    if dtype in ("bfloat16", "auto"):
+        if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+            model = model.to(torch.bfloat16)
+            print("[mdl] Converted to bfloat16 (CUDA)")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            model = model.to(torch.bfloat16)
+            print("[mdl] Converted to bfloat16 (MPS)")
+        else:
+            print("[mdl] bfloat16 not supported, keeping float32")
+    return model
+
+
+def load_model_and_tokenizer(
+    cfg: ModelConfig,
+    load_path: Optional[str] = None,
+    is_checkpoint: bool = False,
+):
     """
-    Load the MDLM checkpoint + matching tokenizer, attach the chat template,
-    add ChatML special tokens, then grow the model vocab to match.
+    Load an MDLM model + tokenizer.
+
+    Two modes:
+      * is_checkpoint=True  -> load a self-contained trained checkpoint
+        (weights + tokenizer with chat template / special tokens / resized
+        vocab already baked in). No download, no resize. Used to warm-start
+        a *fresh* run (new optimizer/scheduler/dataset) from a prior model.
+      * is_checkpoint=False -> build the base model from the bucket: download
+        artifacts, attach chat template, add ChatML specials, resize vocab.
 
     Args:
-        cfg: ModelConfig with model_name and tokenizer_name
+        cfg: ModelConfig with model_name, tokenizer_name, dtype.
+        load_path: directory to load from when is_checkpoint=True (a
+            self-contained HF checkpoint dir). Ignored otherwise.
+        is_checkpoint: select the checkpoint fast path.
 
-    Order of operations (do NOT reorder):
+    Base-model order of operations (do NOT reorder):
       1. Download checkpoint artifacts from the bucket.
       2. Load model from the local snapshot.
       3. Build tokenizer -> attach chat template -> add special tokens
@@ -64,6 +92,33 @@ def load_model_and_tokenizer(cfg: ModelConfig):
       6. Verify shapes and that the MASK row is byte-identical.
     """
 
+    # ---- Fast path: self-contained trained checkpoint ---------------------
+    # The checkpoint dir already has the resized vocab, ChatML special tokens
+    # and chat template baked in, so we load weights + tokenizer directly and
+    # skip the entire base pipeline (download / add specials / resize).
+    if is_checkpoint:
+        ckpt = Path(load_path)
+        print(f"[mdl] Loading self-contained checkpoint from: {ckpt}")
+        model = AutoModelForMaskedLM.from_pretrained(str(ckpt), trust_remote_code=True)
+        print(f"[mdl] Model dtype: {next(model.parameters()).dtype}")
+        model = _convert_to_bfloat16(model, cfg.dtype)
+
+        tokenizer = AutoTokenizer.from_pretrained(str(ckpt))
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        print(f"[tok] Loaded checkpoint tokenizer (vocab size {len(tokenizer)})")
+        print(f"[tok] mask_token : {tokenizer.mask_token!r}  (id {tokenizer.mask_token_id})")
+        print(f"[tok] pad_token  : {tokenizer.pad_token!r}  (id {tokenizer.pad_token_id})")
+
+        # Sanity: model vocab must cover the tokenizer.
+        model_vocab = model.backbone.vocab_embed.embedding.shape[0]
+        assert model_vocab >= len(tokenizer), (
+            f"checkpoint model vocab {model_vocab} < tokenizer {len(tokenizer)}"
+        )
+        print("[mdl] Checkpoint model + tokenizer loaded successfully!")
+        return model, tokenizer
+
+    # ---- Base-model pipeline ----------------------------------------------
     # --- Chat template & special tokens ------------------------------------
     chat_template_str = """
     {%- for message in messages %}
@@ -124,15 +179,7 @@ def load_model_and_tokenizer(cfg: ModelConfig):
     print(f"[mdl] Model dtype: {next(model.parameters()).dtype}")
     
     # Convert to bfloat16 if requested
-    if cfg.dtype == "bfloat16" or cfg.dtype == "auto":
-        if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
-            model = model.to(torch.bfloat16)
-            print("[mdl] Converted to bfloat16 (CUDA)")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            model = model.to(torch.bfloat16)
-            print("[mdl] Converted to bfloat16 (MPS)")
-        else:
-            print("[mdl] bfloat16 not supported, keeping float32")
+    model = _convert_to_bfloat16(model, cfg.dtype)
     
     # 4. ---- Tokenizer: base -> template -> specials -> pad ----------------
     if tokenizer_cache_path.is_dir():
