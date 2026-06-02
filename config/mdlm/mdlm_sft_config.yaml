@@ -21,21 +21,21 @@ run_name: toy_run5
 
 dataset:
   dataset_key: wrp
-  train_data_load_path: ${ds_gen:mdlm,wrp,toy_run5/checkpoint-4,inference_results}
-  test_data_load_path:  ${ds_base:wrp,test}
+  train_data_load_path: ${ds_base:wrp,train}
+  test_data_load_path:  ${ds_base:wrp,validation}
   num_train_samples: 10
   num_test_samples: 25
   max_length: 1024
 
 training:
-  num_epochs: 4
-  batch_size: 16
+  num_epochs: 1
+  batch_size: 64
   learning_rate: 2e-5
   warmup_ratio: 0.03
   weight_decay: 0.01
   grad_clip: 1.0
   num_workers: 4
-  logging_steps: 50
+  logging_steps: 10
   seed: 42
   adam_beta1: 0.9
   adam_beta2: 0.999
@@ -43,8 +43,8 @@ training:
   loss_weight_type: uniform
   time_epsilon: 0.001
   eval_strategy: steps
-  eval_steps: 100
-  save_strategy: "epoch"  # Changed from false to "no"
+  eval_steps: 50
+  save_strategy: "none"  # Changed from false to "no"
   report_to: "wandb"
   batch_eval_metrics: true
   remove_unused_columns: false
