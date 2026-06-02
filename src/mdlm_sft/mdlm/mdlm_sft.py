@@ -64,6 +64,7 @@ def run_training(cfg: TrainConfig) -> None:
     train_ds = load_from_disk(str(cfg.dataset.train_data_load_path))
     if cfg.dataset.num_train_samples and cfg.dataset.num_train_samples > 0:
         train_ds = train_ds.select(range(min(cfg.dataset.num_train_samples, len(train_ds))))
+
     train_ds = train_ds.map(format_to_messages).map(sft_map_fn)
     train_ds = train_ds.select_columns(["input_ids", "labels", "assistant_mask"])
 
@@ -71,6 +72,7 @@ def run_training(cfg: TrainConfig) -> None:
     test_ds = load_from_disk(str(cfg.dataset.test_data_load_path))
     if cfg.dataset.num_test_samples and cfg.dataset.num_test_samples > 0:
         test_ds = test_ds.select(range(min(cfg.dataset.num_test_samples, len(test_ds))))
+        
     test_ds = test_ds.map(format_to_messages).map(sft_map_fn)
     test_ds = test_ds.select_columns(["input_ids", "labels", "assistant_mask"])
 
@@ -147,9 +149,6 @@ def main(cfg: DictConfig) -> None:
             OmegaConf.update(cfg, dotted, value, force_add=True)
         return cfg
 
-    # One line replaces ~70 lines of manual reconstruction.
-    # to_object() instantiates the dataclasses -> runs every __post_init__
-    # -> resolves model/dataset/save paths automatically.
     run_cfg: TrainConfig = OmegaConf.to_object(cfg)
 
     run_training(run_cfg)
