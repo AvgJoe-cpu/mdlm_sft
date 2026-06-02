@@ -4,7 +4,7 @@ from typing import Optional
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING, OmegaConf
 
-from ..paths import MDLM_MODELS, DATASET_BASE_DIR
+from ..paths import MDLM_MODELS, DATASET_BASE_DIR, DATASET_GEN_DIR
 
 
 # ============================================================ #
@@ -16,6 +16,13 @@ def _model_field(model_name: str, key: str) -> str:
 
 def _ds_base(dataset_key: str, split: str) -> str:
     return str(DATASET_BASE_DIR / dataset_key / split)
+
+
+def _ds_gen(model_type: str, dataset_key: str, run_name: str, save_name: str) -> str:
+    # Mirrors mdlm_gen.py's mdlm_gen_out resolver so training can read exactly
+    # what inference wrote:
+    #   artifacts/datasets/gen/<model_type>/<dataset>/<run>/<save_name>
+    return str(DATASET_GEN_DIR / model_type / dataset_key / run_name / save_name)
 
 
 def _model_load_path(model_name: str, checkpoint_name: Optional[str]) -> str:
@@ -43,6 +50,7 @@ def _model_save_path(
 
 OmegaConf.register_new_resolver("mdlm_model", _model_field, replace=True)
 OmegaConf.register_new_resolver("ds_base", _ds_base, replace=True)
+OmegaConf.register_new_resolver("ds_gen", _ds_gen, replace=True)
 OmegaConf.register_new_resolver("mdlm_load_path", _model_load_path, replace=True)
 OmegaConf.register_new_resolver("mdlm_save_path", _model_save_path, replace=True)
 
@@ -72,7 +80,10 @@ class DatasetConfig:
     num_test_samples: int = MISSING
     max_length: int = MISSING
 
-    # derived
+    # Split load paths. Default to the base tree, but each split can be
+    # overridden in YAML to point at a generated dataset via ${ds_gen:...}.
+    #   base : ${ds_base:<dataset_key>,<split>}
+    #   gen  : ${ds_gen:<model_type>,<dataset_key>,<run_name>,<save_name>}
     train_data_load_path: str = "${ds_base:${.dataset_key},train}"
     test_data_load_path: str = "${ds_base:${.dataset_key},test}"
 
