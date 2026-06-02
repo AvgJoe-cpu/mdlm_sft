@@ -150,18 +150,15 @@ def run_inference(cfg: InferenceConfig) -> None:
     print(f"Steps: {cfg.num_steps}")
     print("=" * 60)
 
-    # Load model (same path as training)
-    model, tokenizer = load_model_and_tokenizer(cfg.model)
-
-    # Load checkpoint if specified
-    if cfg.checkpoint_name:
-        checkpoint_path = model_path / "pytorch_model.bin"
-        if checkpoint_path.exists():
-            print(f"Loading checkpoint: {checkpoint_path}")
-            state_dict = torch.load(checkpoint_path, map_location=model.device)
-            model.load_state_dict(state_dict)
-        else:
-            print(f"Warning: Checkpoint not found at {checkpoint_path}, using base model")
+    # Always warm-load the trained checkpoint directly (weights + tokenizer
+    # baked in: resized vocab, chat template, ChatML specials). model_path
+    # mirrors exactly what training writes:
+    #   .../checkpoints/<model_name>/<run_name>/checkpoint-N
+    model, tokenizer = load_model_and_tokenizer(
+        cfg.model,
+        load_path=str(model_path),
+        is_checkpoint=True,
+    )
 
     model.eval()
 
