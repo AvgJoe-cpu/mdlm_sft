@@ -12,10 +12,13 @@ hydra:
 
 model:
   model_name: mdlm-owt
-  checkpoint_name: toy_run4/checkpoint-4
   tokenizer_name: gpt2
   dtype: bfloat16
   device_map: auto
+
+# IF MODEL IS LOADED FROM CHECKPOINT, THESE VALUES ARE OVERRIDDEN BY THE CHECKPOINT CONFIG
+checkpoint_name: null
+run_name: toy_run5
 
 dataset:
   dataset_key: wrp
@@ -46,6 +49,5 @@ training:
   remove_unused_columns: false
   bf16: true
 
-checkpoint_name: null
-run_name: toy_run3
+
 seed: 42
