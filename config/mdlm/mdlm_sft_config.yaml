@@ -11,7 +11,8 @@ hydra:
     dir: .
 
 model:
-  model_name: mdlm-owt/toy_run3/checkpoint-4
+  model_name: mdlm-owt
+  checkpoint_name: toy_run4/checkpoint-4
   tokenizer_name: gpt2
   dtype: bfloat16
   device_map: auto
