@@ -52,7 +52,7 @@ def load_model_and_tokenizer(cfg: ModelConfig):
     add ChatML special tokens, then grow the model vocab to match.
 
     Args:
-        cfg: MDLMModelConfig with model_name and tokenizer_name
+        cfg: ModelConfig with model_name and tokenizer_name
 
     Order of operations (do NOT reorder):
       1. Download checkpoint artifacts from the bucket.
@@ -80,19 +80,23 @@ def load_model_and_tokenizer(cfg: ModelConfig):
     {%- endif %}
     """.strip()
 
+    # Derived config paths arrive as strings (OmegaConf interpolation);
+    # wrap the ones we do Path arithmetic on.
+    base_path = Path(cfg.base_path)
+    tokenizer_cache_path = Path(cfg.tokenizer_cache_path)
+
     # 1. ---- Ensure base path exists ----------------------------------------
-    # 1. ---- Ensure base path exists ----------------------------------------
-    cfg.base_path.mkdir(parents=True, exist_ok=True)
+    base_path.mkdir(parents=True, exist_ok=True)
     
     print(f"[mdl] Model repository: {cfg.hf_path}")
-    print(f"[mdl] Cache directory: {cfg.base_path}")
+    print(f"[mdl] Cache directory: {base_path}")
     
     # 2. ---- Download model artifacts (only if missing) ---------------------
     required_files = [
-        ("model.safetensors", cfg.base_path / "model.safetensors"),
-        ("modeling_mdlm.py", cfg.base_path / "modeling_mdlm.py"),
-        ("config.json", cfg.base_path / "config.json"),
-        ("configuration_mdlm.py", cfg.base_path / "configuration_mdlm.py"),
+        ("model.safetensors", base_path / "model.safetensors"),
+        ("modeling_mdlm.py", base_path / "modeling_mdlm.py"),
+        ("config.json", base_path / "config.json"),
+        ("configuration_mdlm.py", base_path / "configuration_mdlm.py"),
     ]
     
     # Check which files need downloading
@@ -111,9 +115,9 @@ def load_model_and_tokenizer(cfg: ModelConfig):
         print("[mdl] ✓ All model files cached, skipping download")
     
     # 3. ---- Load model from local cache ------------------------------------
-    print(f"[mdl] Loading model from: {cfg.base_path}")
+    print(f"[mdl] Loading model from: {base_path}")
     model = AutoModelForMaskedLM.from_pretrained(
-        str(cfg.base_path),
+        str(base_path),
         trust_remote_code=True,
     )
     
@@ -131,14 +135,14 @@ def load_model_and_tokenizer(cfg: ModelConfig):
             print("[mdl] bfloat16 not supported, keeping float32")
     
     # 4. ---- Tokenizer: base -> template -> specials -> pad ----------------
-    if cfg.tokenizer_cache_path.is_dir():
-        print(f"[tok] Loading cached tokenizer from: {cfg.tokenizer_cache_path}")
-        tokenizer = AutoTokenizer.from_pretrained(str(cfg.tokenizer_cache_path))
+    if tokenizer_cache_path.is_dir():
+        print(f"[tok] Loading cached tokenizer from: {tokenizer_cache_path}")
+        tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_cache_path))
     else:
         print(f"[tok] Loading base tokenizer: {cfg.tokenizer_name}")
         tokenizer = AutoTokenizer.from_pretrained(cfg.tokenizer_name)
-        cfg.tokenizer_cache_path.mkdir(parents=True, exist_ok=True)
-        tokenizer.save_pretrained(str(cfg.tokenizer_cache_path))
+        tokenizer_cache_path.mkdir(parents=True, exist_ok=True)
+        tokenizer.save_pretrained(str(tokenizer_cache_path))
 
     print(f"[tok] base tokenizer      : {cfg.tokenizer_name}")
     print(f"[tok] base vocab size     : {len(tokenizer)}")
