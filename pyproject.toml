@@ -15,6 +15,7 @@ dependencies = [
     "cryptography",
     "torchvision",
     "wandb",
+    "huggingface_hub",
 ]
 
 
