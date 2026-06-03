@@ -15,25 +15,25 @@ def count_sentence_tokens(example, tokenizer, sentences_field="sentences"):
     return {"token_count": total_tokens}
 
 
-
 def sent_tokenize(example, model=None, text_field="text"):
     text = example.get(text_field, "")
     sentences = model.split(text)
     return {"sentences": sentences}
 
-def split_sentences_to_prompt_completion(batch):
-    prompts, completions = [], []
-    for sentences in batch["sentences"]:
-        mid_idx = round(len(sentences) / 2)
-        prompts.append(" ".join(sentences[:mid_idx]))
-        completions.append(" ".join(sentences[mid_idx:]))
-    return {"prompt": prompts, "completion": completions}
+
+def split_sentences_to_prompt_completion(example):
+    sentences = example["sentences"]
+    mid_idx = round(len(sentences) / 2)
+    return {
+        "prompt": " ".join(sentences[:mid_idx]),
+        "completion": " ".join(sentences[mid_idx:]),
+    }
 
 
 def load_and_process_tis(demo_size=10000, force_reprocess=False):
     dataset_key = "tis"
-    base_path = DATASETS[dataset_key]["base_path"]  # ← raw path, no existence check
-    base_path.mkdir(parents=True, exist_ok=True)    # ← creates it if missing
+    base_path = DATASETS[dataset_key]["base_path"]
+    base_path.mkdir(parents=True, exist_ok=True)
     print(f"\nResolving dataset base path for '{dataset_key}':")
     print(f"Save location: {base_path}")
     print(f"Dataset: {DATASETS[dataset_key]['name']}")
@@ -54,14 +54,17 @@ def load_and_process_tis(demo_size=10000, force_reprocess=False):
         ds = ds.map(add_hash_id, desc="[1/5] hash IDs")
         ds = ds.map(
             lambda x: sent_tokenize(x, model=sat_model),
-            desc="Sentence tokenizing"
+            desc="[2/5] sentence tokenizing"
         )
         ds = ds.map(
-            lambda batch: {"sent_count": [len([s for s in sents if s.strip()]) for sents in batch["sentences"]]},
-            batched=True, desc="[3/5] sentence counts"
+            lambda x: {"sent_count": len([s for s in x["sentences"] if s.strip()])},
+            desc="[3/5] sentence counts"
         )
-        ds = ds.map(lambda batch: count_sentence_tokens(batch, tokenizer), batched=True, desc="[4/5] token counts")
-        ds = ds.map(split_sentences_to_prompt_completion, batched=True, desc="[5/5] prompt/completion split")
+        ds = ds.map(
+            lambda x: count_sentence_tokens(x, tokenizer),
+            desc="[4/5] token counts"
+        )
+        ds = ds.map(split_sentences_to_prompt_completion, desc="[5/5] prompt/completion split")
 
         ds.save_to_disk(str(base_path / split_name))
         print(f"  ✅ saved → {base_path / split_name}")
@@ -80,7 +83,7 @@ def load_and_process_tis(demo_size=10000, force_reprocess=False):
             torch.mps.empty_cache()
             print("  🧹 MPS cache cleared.")
     except ImportError:
-        pass  # torch not installed; nothing to free
+        pass
 
 
 if __name__ == "__main__":
