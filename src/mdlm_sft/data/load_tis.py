@@ -32,12 +32,11 @@ def split_sentences_to_prompt_completion(batch):
 
 def load_and_process_tis(demo_size=10000, force_reprocess=False):
     dataset_key = "tis"
-    base_path = resolve_dataset_base_path(dataset_key)  # ← must come first
-    base_path.mkdir(parents=True, exist_ok=True)
+    base_path = DATASETS[dataset_key]["base_path"]  # ← raw path, no existence check
+    base_path.mkdir(parents=True, exist_ok=True)    # ← creates it if missing
     print(f"\nResolving dataset base path for '{dataset_key}':")
     print(f"Save location: {base_path}")
     print(f"Dataset: {DATASETS[dataset_key]['name']}")
-
     dd = load_dataset(DATASETS[dataset_key]["hf-path"])
 
     if not force_reprocess and all((base_path / s).exists() for s in dd.keys()):
