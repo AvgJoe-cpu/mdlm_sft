@@ -32,8 +32,8 @@ def split_sentences_to_prompt_completion(batch):
 
 def load_and_process_tis(demo_size=10000, force_reprocess=False):
     dataset_key = "tis"
-    base_path = resolve_dataset_base_path(dataset_key)
     base_path.mkdir(parents=True, exist_ok=True)
+    base_path = resolve_dataset_base_path(dataset_key)
 
     dd = load_dataset(DATASETS[dataset_key]["hf-path"])
 
