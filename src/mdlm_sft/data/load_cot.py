@@ -190,7 +190,7 @@ def split_dataset_by_ratios(dataset: Dataset, ratios: List[float]) -> DatasetDic
 try:
     # 1. Load + normalize
     raw_ds = load_dataset("avgJo3/Cot-collection-datasets-4.8.5", split="train")
-    raw_ds = raw_ds.select(range(10000))
+    raw_ds = raw_ds.select(range(100000))  # Limit to 100k samples for memory management
     print(raw_ds[0])
 
     pilot_ds = (
