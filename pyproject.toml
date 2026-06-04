@@ -3,7 +3,7 @@ name = "mdlm-sft"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "datasets",
+    "datasets==4.8.5",
     "torch",
     "transformers",
     "accelerate",
