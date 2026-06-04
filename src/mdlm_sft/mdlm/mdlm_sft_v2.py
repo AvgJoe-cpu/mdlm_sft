@@ -11,7 +11,7 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
-from datasets import Dataset
+from datasets import Dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModelForMaskedLM, DataCollator, PreTrainedTokenizerBase, DefaultDataCollator
 from trl import SFTConfig, SFTTrainer, trainer
 
@@ -323,7 +323,7 @@ def run_training(cfg: TrainingConfig) -> None:
     )
 
     try:
-        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+        trainer.train()
     finally:
         # Delete stale references to free memory promptly
         del trainer
