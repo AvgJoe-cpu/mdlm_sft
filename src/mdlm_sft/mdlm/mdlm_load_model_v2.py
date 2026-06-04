@@ -89,6 +89,9 @@ def download_base_model() -> None:
                 "<|user|>",
                 "<|assistant|>",
                 "<|system|>",
+                "<think>",
+                "</think>",
+                "<answer",
             ],
         }
     )
