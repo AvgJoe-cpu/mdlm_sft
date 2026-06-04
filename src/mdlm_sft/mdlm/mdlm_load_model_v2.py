@@ -91,7 +91,7 @@ def download_base_model() -> None:
                 "<|system|>",
                 "<think>",
                 "</think>",
-                "<answer",
+                "<answer>",
             ],
         }
     )
