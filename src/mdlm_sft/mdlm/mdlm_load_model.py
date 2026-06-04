@@ -212,6 +212,9 @@ def load_model_and_tokenizer(
                 "<|user|>",
                 "<|assistant|>",
                 "<|system|>",
+                "<answer>",
+                "<think>",
+                "</think>",
             ],
         }
     )
