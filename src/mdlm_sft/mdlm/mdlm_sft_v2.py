@@ -284,7 +284,7 @@ class TrainingConfig:
     # ── Training loop ────────────────────────────────────────────────────────
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 1
-    num_train_epochs: float = 5.0
+    num_train_epochs: float = 1.0
     max_steps: int = -1                # overrides num_train_epochs if > 0
     bf16: bool = True
 
