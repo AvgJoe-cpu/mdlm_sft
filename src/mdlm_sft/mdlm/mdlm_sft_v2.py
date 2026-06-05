@@ -272,8 +272,8 @@ class TrainingConfig:
 
     # ── Optimization ─────────────────────────────────────────────────────────
     learning_rate: float = 2e-5
-    lr_scheduler_type: str = "linear"  # "cosine" | "linear" | "constant" | ...
-    warmup_ratio: Optional[float] = None
+    lr_scheduler_type: str = "cosine"  # "cosine" | "linear" | "constant" | ...
+    warmup_ratio: Optional[float] = 0.03
     warmup_steps: int = 0              # overridden by warmup_ratio if set
     weight_decay: float = 0.0
     adam_beta1: float = 0.9
@@ -361,7 +361,7 @@ def run_training(cfg: TrainingConfig) -> None:
     trainer = CustomForwardSFTTrainer(
         scheduler=scheduler,
         time_epsilon=1e-3,
-        loss_weight_type="uniform",
+        loss_weight_type="scheduler",
         model=model,
         args=args,
         train_dataset=train_ds,
