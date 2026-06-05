@@ -67,7 +67,7 @@ def generate_mdlm(
     decoded = [
         tokenizer.decode(
             out[b, int(prompt_lens[b]) : int(prompt_lens[b]) + response_length],
-            skip_special_tokens=True,
+            skip_special_tokens=False,  # fix 7: was True, but we want to preserve special tokens for evaluation
         )
         for b in range(out.shape[0])
     ]
