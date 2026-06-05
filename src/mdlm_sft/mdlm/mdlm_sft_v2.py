@@ -295,7 +295,7 @@ class TrainingConfig:
     eval_on_start: bool = True
     metric_for_best_model: str = "eval_nll"
     greater_is_better: bool = False
-    load_best_model_at_end: bool = True
+    load_best_model_at_end: bool = False
 
     # ── Logging ──────────────────────────────────────────────────────────────
     logging_steps: int = 25
