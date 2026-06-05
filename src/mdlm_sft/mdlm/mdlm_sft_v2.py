@@ -348,8 +348,8 @@ def run_training(cfg: TrainingConfig) -> None:
     model = AutoModelForMaskedLM.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
 
     train_ds_path, eval_ds_path = cfg_dict.pop("train_ds_path"), cfg_dict.pop("eval_ds_path")
-    train_ds = load_from_disk(train_ds_path).map(format_to_messages)
-    eval_ds  = load_from_disk(eval_ds_path).map(format_to_messages)
+    train_ds = load_from_disk(train_ds_path, keep_in_memory=True).map(format_to_messages)
+    eval_ds  = load_from_disk(eval_ds_path, keep_in_memory=True).map(format_to_messages)
 
     train_ds = train_ds.map(_sft_map_fn, fn_kwargs={"tokenizer": tokenizer, "max_length": cfg.max_length})
     eval_ds  = eval_ds.map(_sft_map_fn, fn_kwargs={"tokenizer": tokenizer, "max_length": cfg.max_length})
