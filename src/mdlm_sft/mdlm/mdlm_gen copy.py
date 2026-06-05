@@ -31,7 +31,6 @@ def generate_mdlm(
     tokenizer=None,
     model=None,
     sampler=None,
-    scheduler=None,
     response_length=None,  # fix 2: was referenced as config.response_length
     num_steps=None,
 ):
@@ -63,7 +62,6 @@ def generate_mdlm(
             pad_token_id=pad_id,
             response_length=response_length,
             num_steps=num_steps,
-            scheduler=scheduler,
         )
 
     decoded = [
@@ -104,7 +102,6 @@ def run_inference(cfg: GenerationConfig) -> None:  # fix 1: was InferenceConfig
             "tokenizer": tokenizer,
             "model": model,
             "sampler": sampler,
-            "scheduler": scheduler,
             "response_length": cfg.response_length,
             "num_steps": cfg.num_steps,
         },
