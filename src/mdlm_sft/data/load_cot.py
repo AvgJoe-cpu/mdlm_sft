@@ -202,15 +202,16 @@ try:
     del raw_ds; gc.collect()
 
     # 2. Training-mix splits
-    dd = split_dataset_by_ratios(pilot_ds, [0.025, 0.025, 0.05, 0.45, 0.45])
+    #dd = split_dataset_by_ratios(pilot_ds, [0.025, 0.025, 0.05, 0.45, 0.45])
+    dd = split_dataset_by_ratios(pilot_ds, [0.025, 0.025, 0.05, 0.9])
     del pilot_ds; gc.collect()
 
     _cols_to_drop = ["source", "rationale", "target", "task", "type"]
     dd["2.5%-0_split"] = dd["2.5%-0_split"].map(format_no_cot).remove_columns(_cols_to_drop)
     dd["2.5%-1_split"] = dd["2.5%-1_split"].map(format_cot_labels).remove_columns(_cols_to_drop)
     dd["5%-2_split"]   = dd["5%-2_split"].map(format_cot_only).remove_columns(_cols_to_drop)
-    dd["45%-3_split"]  = dd["45%-3_split"].map(format_cot_completion_pre).remove_columns(_cols_to_drop)
-    dd["45%-4_split"]  = dd["45%-4_split"].map(format_cot_completion_post).remove_columns(_cols_to_drop)
+    dd["90%-3_split"]  = dd["90%-3_split"].map(format_cot_completion_post).remove_columns(_cols_to_drop)
+    #dd["90%-4_split"]  = dd["90%-4_split"].map(format_cot_completion_post).remove_columns(_cols_to_drop)
 
     print("Processing complete — sample outputs:")
     for key in dd:
