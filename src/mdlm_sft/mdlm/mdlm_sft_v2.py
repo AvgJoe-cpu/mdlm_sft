@@ -232,8 +232,12 @@ class CustomForwardSFTTrainer(SFTTrainer):
         ### CHANGE (stability #3): token-weighted accuracy/entropy (Σ/Σ).
         sums = self._metric_sums[mode]
         tok  = sums["tokens"]
-        metrics["mean_token_accuracy"] = (sums["correct"] / tok) if tok > 0 else 0.0
-        metrics["entropy"]             = (sums["entropy"] / tok) if tok > 0 else 0.0
+        if tok > 0:
+            metrics["mean_token_accuracy"] = sums["correct"] / tok
+            metrics["entropy"]             = sums["entropy"] / tok
+
+        metrics["mean_token_accuracy"] = (sums["correct"] / tok) if tok > 0 else 0.0   
+        metrics["entropy"]             = (sums["entropy"] / tok) if tok > 0 else 0.0   
 
         ### FAITHFUL: weighted NELBO -> bpd/ppl, read from the OWN accumulators (renamed denom).
         if mode == "eval" and self._eval_token_sum > 0:
