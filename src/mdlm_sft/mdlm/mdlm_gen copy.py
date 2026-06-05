@@ -78,7 +78,7 @@ def generate_mdlm(
 def run_inference(cfg: GenerationConfig) -> None:  # fix 1: was InferenceConfig
     # fix 3, 5: cfg.pop() → cfg.<field>; positional arg to from_pretrained
     model = AutoModelForMaskedLM.from_pretrained(
-        cfg.model_name_or_path, trust_remote_code=True, torch_dtype="auto"
+        cfg.model_name_or_path, trust_remote_code=True, device_map="auto"
     ).eval()
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model_name_or_path, trust_remote_code=True
