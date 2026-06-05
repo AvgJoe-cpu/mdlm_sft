@@ -230,14 +230,16 @@ class CustomForwardSFTTrainer(SFTTrainer):
         metrics = {key: sum(val) / len(val) for key, val in self._metrics[mode].items()}
 
         ### CHANGE (stability #3): token-weighted accuracy/entropy (Σ/Σ).
+        ### FIX: emit ONLY when tokens were accumulated. NO `else 0.0` fallback — the
+        ### end-of-training summary log() fires in eval mode with empty accumulators
+        ### (tok == 0); any 0.0 written here is plotted as a phantom drop on the
+        ### eval_entropy / eval_mean_token_accuracy charts. Mirrors the `_eval_token_sum > 0`
+        ### guard used for nll/bpd/ppl below.
         sums = self._metric_sums[mode]
         tok  = sums["tokens"]
         if tok > 0:
             metrics["mean_token_accuracy"] = sums["correct"] / tok
             metrics["entropy"]             = sums["entropy"] / tok
-
-        metrics["mean_token_accuracy"] = (sums["correct"] / tok) if tok > 0 else 0.0   
-        metrics["entropy"]             = (sums["entropy"] / tok) if tok > 0 else 0.0   
 
         ### FAITHFUL: weighted NELBO -> bpd/ppl, read from the OWN accumulators (renamed denom).
         if mode == "eval" and self._eval_token_sum > 0:
@@ -254,8 +256,6 @@ class CustomForwardSFTTrainer(SFTTrainer):
         super().log(logs, start_time)
         self._metrics[mode].clear()
         self._metric_sums[mode] = self._zero_sums()
-        
-
 
 @dataclass
 class TrainingConfig:
