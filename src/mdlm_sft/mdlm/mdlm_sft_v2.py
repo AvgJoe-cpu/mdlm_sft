@@ -284,7 +284,7 @@ class TrainingConfig:
     # ── Training loop ────────────────────────────────────────────────────────
     per_device_train_batch_size: int = 2
     gradient_accumulation_steps: int = 1
-    num_train_epochs: float = 1.0
+    num_train_epochs: float = 5.0
     max_steps: int = -1                # overrides num_train_epochs if > 0
     bf16: bool = True
 
@@ -300,7 +300,7 @@ class TrainingConfig:
     # ── Logging ──────────────────────────────────────────────────────────────
     logging_steps: int = 25
     report_to: str = "wandb"
-    project: Optional[str] = None      # only relevant if report_to != "none"
+    project: Optional[str] = "CoT-chat"      # only relevant if report_to != "none"
 
     # ── Memory & performance ─────────────────────────────────────────────────
     gradient_checkpointing: bool = False
@@ -370,7 +370,7 @@ def run_training(cfg: TrainingConfig) -> None:
     )
 
     try:
-        trainer.train()
+        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     finally:
         # Delete stale references to free memory promptly
         del trainer
