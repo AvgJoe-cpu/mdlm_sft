@@ -1,29 +1,30 @@
 from dataclasses import dataclass
-from transformers import AutoTokenizer, AutoModelForMaskedLM, DataCollator, PreTrainedTokenizerBase, DefaultDataCollator
+from pathlib import Path
+from transformers import AutoTokenizer, AutoModelForMaskedLM
 import gc
 from datasets import load_from_disk
 import torch
 import hydra
 from hydra.core.config_store import ConfigStore
-from omegaconf import DictConfig, OmegaConf, MISSING
+from omegaconf import MISSING
 
-from .mdlm_helpers.mdlm_scheduler import make_alpha_scheduler, LinearAlphaScheduler
-from .mdlm_helpers.mdlm_sampler_sft import (
-    MinimalMDLMSampler,
-    SFTMixinBatchedVarlen,
-)
+from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
+from .mdlm_helpers.mdlm_sampler_sft import MinimalMDLMSampler, SFTMixinBatchedVarlen
+
+
 @dataclass
 class GenerationConfig:
-    response_length: int = 10 
-    num_steps: int  = 10
+    response_length: int = 10
+    num_steps: int = 10
     batch_size: int = 8
-    dataset_input_path: str = "path/to/input/dataset"
-    dataset_output_path: str = "path/to/output/dataset"
-    model_name_or_path: str = "path/to/model"
+    dataset_input_path: str = MISSING   # must be overridden on CLI
+    dataset_output_path: str = MISSING  # must be overridden on CLI
+    model_name_or_path: str = MISSING   # must be overridden on CLI
 
 
 cs = ConfigStore.instance()
-cs.store(name="config", node=GenerationConfig)    
+cs.store(name="config", node=GenerationConfig)
+
 
 def generate_mdlm(
     batch,
@@ -31,7 +32,7 @@ def generate_mdlm(
     model=None,
     sampler=None,
     scheduler=None,
-    response_length=None,
+    response_length=None,  # fix 2: was referenced as config.response_length
     num_steps=None,
 ):
     messages_list = [[{"role": "user", "content": p}] for p in batch["prompt"]]
@@ -46,7 +47,6 @@ def generate_mdlm(
         truncation=True,
     )
 
-    # Match model dtype
     model_dtype = next(model.parameters()).dtype
     prompt_ids = encoded["input_ids"].to(model.device)
     attn = encoded["attention_mask"].to(model.device)
@@ -56,7 +56,7 @@ def generate_mdlm(
     assert pad_id is not None, "tokenizer has no pad_token_id"
     assert pad_id != tokenizer.mask_token_id, "pad_token_id == mask_token_id"
 
-    with torch.autocast(device_type=str(model.device).split(':')[0], dtype=model_dtype):
+    with torch.autocast(device_type=str(model.device).split(":")[0], dtype=model_dtype):
         out = sampler.sample_sft(
             prompt_ids,
             prompt_lens=prompt_lens,
@@ -66,10 +66,9 @@ def generate_mdlm(
             scheduler=scheduler,
         )
 
-    R = config.response_length
     decoded = [
         tokenizer.decode(
-            out[b, int(prompt_lens[b]) : int(prompt_lens[b]) + R],
+            out[b, int(prompt_lens[b]) : int(prompt_lens[b]) + response_length],
             skip_special_tokens=True,
         )
         for b in range(out.shape[0])
@@ -77,36 +76,51 @@ def generate_mdlm(
     return {"completion": decoded}
 
 
-def run_inference(cfg: InferenceConfig) -> None:
-    model_name_or_path = cfg.pop("model_name_or_path")
-    model = AutoModelForMaskedLM.from_pretrained(model_name_or_path=model_name_or_path, trust_remote_code=True, torch_dtype="auto").eval()
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path=model_name_or_path, trust_remote_code=True)
+@hydra.main(config_path=None, config_name="config", version_base=None)  # fix 8
+def run_inference(cfg: GenerationConfig) -> None:  # fix 1: was InferenceConfig
+    # fix 3, 5: cfg.pop() → cfg.<field>; positional arg to from_pretrained
+    model = AutoModelForMaskedLM.from_pretrained(
+        cfg.model_name_or_path, trust_remote_code=True, torch_dtype="auto"
+    ).eval()
+    tokenizer = AutoTokenizer.from_pretrained(
+        cfg.model_name_or_path, trust_remote_code=True
+    )
 
-
-    scheduler =LinearAlphaScheduler()
-
+    scheduler = LinearAlphaScheduler()
     sampler = MinimalMDLMSampler(
         backbone=model,
         scheduler=scheduler,
         mask_index=tokenizer.mask_token_id,
     )
-    sampler.sample_sft = SFTMixinBatchedVarlen.sample_sft.__get__(
-        sampler, type(sampler)
-    )    
-    input_dataset_path = cfg.pop("input_dataset_path")
-    ds = load_from_disk(input_dataset_path)
-    output_dataset_path = cfg.pop("output_dataset_path")
+    sampler.sample_sft = SFTMixinBatchedVarlen.sample_sft.__get__(sampler, type(sampler))
+
+    # fix 4: was cfg.pop("input_dataset_path") and wrong field name
+    ds = load_from_disk(cfg.dataset_input_path)
 
     ds = ds.map(
         generate_mdlm,
         batched=True,
-        fn_kwargs={"tokenizer": tokenizer, "model": model, "sampler": sampler, "scheduler": scheduler, "response_length": cfg.response_length, "num_steps": cfg.num_steps},
+        fn_kwargs={
+            "tokenizer": tokenizer,
+            "model": model,
+            "sampler": sampler,
+            "scheduler": scheduler,
+            "response_length": cfg.response_length,
+            "num_steps": cfg.num_steps,
+        },
         batch_size=cfg.batch_size,
-    )    
-    output_dataset_path.mkdir(parents=True, exist_ok=True)
-    ds.save_to_disk(output_dataset_path)
+    )
+
+    # fix 6: was output_dataset_path.mkdir() on a str; wrap in Path
+    output_path = Path(cfg.dataset_output_path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    ds.save_to_disk(output_path)
 
     del model, tokenizer, sampler, ds
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+if __name__ == "__main__":  # fix 9: required for python -m
+    run_inference()
