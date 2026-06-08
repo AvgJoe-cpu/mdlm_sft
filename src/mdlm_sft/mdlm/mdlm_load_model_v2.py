@@ -64,7 +64,12 @@ def download_base_model() -> None:
         model = model.to(torch.bfloat16)
 
 
+    DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
+
     chat_template_str = """
+    {%- if messages[0]['role'] != 'system' %}
+    {{- '<|im_start|>system\n' + default_system_prompt + '<|im_end|>\n' }}
+    {%- endif %}
     {%- for message in messages %}
     {%- if message['role'] == 'system' %}
     {{- '<|im_start|>system\n' + message['content'] + '<|im_end|>\n' }}
@@ -77,7 +82,10 @@ def download_base_model() -> None:
     {%- if add_generation_prompt %}
     {{- '<|im_start|>assistant\n' }}
     {%- endif %}
-    """.strip()        
+        """.strip()
+
+    tokenizer.chat_template = chat_template_str
+    tokenizer.default_system_prompt = DEFAULT_SYSTEM_PROMPT  # stored in tokenizer_config.json
 
     tokenizer.chat_template = chat_template_str
     tokenizer.add_special_tokens(
