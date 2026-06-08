@@ -87,4 +87,4 @@ def load_and_process_tis(demo_size=10000, force_reprocess=False):
 
 
 if __name__ == "__main__":
-    load_and_process_tis(demo_size=100000, force_reprocess=True)
+    load_and_process_tis(demo_size=5000, force_reprocess=True)
