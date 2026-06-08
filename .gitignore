@@ -223,8 +223,8 @@ artifacts/**/*
 
 wandb
 # Hydra output directory
-output
-data 
-ar 
-config
-artifacts
+output/
+data/
+ar/
+config/
+artifacts/
