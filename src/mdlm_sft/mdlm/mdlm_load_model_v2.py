@@ -67,6 +67,7 @@ def download_base_model() -> None:
     DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
     chat_template_str = """
+    {%- set default_system_prompt = __SYS__ %}
     {%- if messages[0]['role'] != 'system' %}
     {{- '<|im_start|>system\n' + default_system_prompt + '<|im_end|>\n' }}
     {%- endif %}
@@ -82,10 +83,7 @@ def download_base_model() -> None:
     {%- if add_generation_prompt %}
     {{- '<|im_start|>assistant\n' }}
     {%- endif %}
-        """.strip()
-
-    tokenizer.chat_template = chat_template_str
-    tokenizer.default_system_prompt = DEFAULT_SYSTEM_PROMPT  # stored in tokenizer_config.json
+    """.strip().replace("__SYS__", repr(DEFAULT_SYSTEM_PROMPT))
 
     tokenizer.chat_template = chat_template_str
     tokenizer.add_special_tokens(
