@@ -80,7 +80,7 @@ def sample_by_token_range(
     return pool.shuffle(seed=seed).select(range(num_samples))
 
 
-def load_and_process_wrp(demo_size=10000, force_reprocess=False, to_hub=True):
+def load_and_process_wrp(demo_size=10000, force_reprocess=False, to_hub=False):
     dataset_key = "wrp"
 
     base_path = DATASETS[dataset_key]["base_path"]
@@ -195,6 +195,6 @@ def load_and_process_wrp(demo_size=10000, force_reprocess=False, to_hub=True):
 
 
 if __name__ == "__main__":
-    load_and_process_wrp(demo_size=100000, force_reprocess=True)
+    load_and_process_wrp(demo_size=1000, force_reprocess=True)
 
 

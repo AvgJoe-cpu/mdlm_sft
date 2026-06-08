@@ -138,12 +138,12 @@ def add_hash_id(batch, indices, field_names=("prompt", "completion")):
 # ── Formatting functions ────────────────────────────────────────────────────────
 def format_no_cot(example):               # A1: (no CoT, labels)
     example["prompt"]     = example["source"]
-    example["completion"] = f"<answer> {example['target']}"
+    example["completion"] = f"{example['target']}"
     return example
 
 def format_cot_labels(example):           # A2: (source + CoT, labels)
     example["prompt"]     = f"{example['source']} <think> {example['rationale']} </think>"
-    example["completion"] = f"<answer> {example['target']}"
+    example["completion"] = f"{example['target']}"
     return example
 
 def format_cot_only(example):             # B1: (CoT, no labels)
@@ -153,12 +153,12 @@ def format_cot_only(example):             # B1: (CoT, no labels)
 
 def format_cot_completion_pre(example):   # C1: (CoT + labels)
     example["prompt"]     = example["source"]
-    example["completion"] = f"<answer> {example['target']} <think> {example['rationale']} </think>"
+    example["completion"] = f"{example['target']} <think> {example['rationale']} </think>"
     return example
 
 def format_cot_completion_post(example):  # C2: (labels + CoT)
     example["prompt"]     = example["source"]
-    example["completion"] = f"<think> {example['rationale']} </think> <answer> {example['target']}"
+    example["completion"] = f"<think> {example['rationale']} </think> {example['target']}"
     return example
 
 # ── Split utility ───────────────────────────────────────────────────────────────
