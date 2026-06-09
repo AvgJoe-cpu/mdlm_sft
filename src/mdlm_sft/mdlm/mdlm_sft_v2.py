@@ -312,6 +312,7 @@ class TrainingConfig:
     gradient_checkpointing: bool = False
     activation_offloading: bool = True
     torch_compile: bool = True
+    torch_compile_mode: str = "reduce-overhead"    
     use_liger_kernel: bool = True
     dataloader_num_workers: int = 8
     dataloader_prefetch_factor: int = 8
