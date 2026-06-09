@@ -1,7 +1,7 @@
 from __future__ import annotations
 import random
 from dataclasses import dataclass
-from typing import Optional, Any, Tuple
+from typing import Dict, Optional, Any, Tuple, Union
 import math 
 import torch
 import torch.nn.functional as F
@@ -67,7 +67,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
         formatting_func: Optional[Any] = None,
 
         scheduler: Optional[Any] = None,
-        time_epsilon: float = 1e-5,
+        time_epsilon: float = 1e-3,
         loss_weight_type: str = "scheduler",
         deterministic_eval: bool = True,   ### FAITHFUL: reproducible eval noise (see _eval_rand).
         eval_seed: int = 0,                ### FAITHFUL: base seed for eval noise.
@@ -276,7 +276,9 @@ class TrainingConfig:
 
     # ── Optimization ─────────────────────────────────────────────────────────
     learning_rate: float = 2e-5
-    lr_scheduler_type: str = "cosine"  # "cosine" | "linear" | "constant" | ...
+    lr_scheduler_type: str = "cosine"  # "cosine" | "linear" | "constant" | ...#
+    lr_scheduler_kwargs: Optional[Dict[str, Any]] = None  # e.g. {"num_cycles": 2}
+
     warmup_ratio: Optional[float] = 0.03
     warmup_steps: int = 0              # overridden by warmup_ratio if set
     weight_decay: float = 0.0
@@ -328,7 +330,13 @@ def format_to_messages(example):
         ]
     }
 
-def run_training(cfg: TrainingConfig) -> None:
+DatasetInput = Union[str, Dataset]
+
+def run_training(
+    cfg: TrainingConfig,
+    train_ds: Optional[DatasetInput] = None,
+    eval_ds:  Optional[DatasetInput] = None,
+) -> None:
 
     def _sft_map_fn(example, tokenizer=None, max_length=None):
         enc = tokenizer.apply_chat_template(example["messages"], tokenize=True, add_generation_prompt=False,
@@ -340,19 +348,25 @@ def run_training(cfg: TrainingConfig) -> None:
         labels = [tok if m == 1 else -100 for tok, m in zip(input_ids, assistant_mask)]        
         return {"input_ids": input_ids, "labels": labels, "assistant_masks": assistant_mask, "attention_mask": attention_mask}    
     
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    model_name_or_path = cfg_dict.pop("model_name_or_path")
+    cfg_dict               = OmegaConf.to_container(cfg, resolve=True)
+    model_name_or_path     = cfg_dict.pop("model_name_or_path")
     resume_from_checkpoint = cfg_dict.pop("resume_from_checkpoint", None)
 
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
-    model = AutoModelForMaskedLM.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
+    model     = AutoModelForMaskedLM.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
 
-    train_ds_path, eval_ds_path = cfg_dict.pop("train_ds_path"), cfg_dict.pop("eval_ds_path")
-    train_ds = load_from_disk(train_ds_path, keep_in_memory=True).map(format_to_messages)
-    eval_ds  = load_from_disk(eval_ds_path, keep_in_memory=True).map(format_to_messages)
+    # Always pop both to prevent leaking into SFTConfig
+    train_src = train_ds if train_ds is not None else cfg_dict.pop("train_ds_path")
+    eval_src  = eval_ds  if eval_ds  is not None else cfg_dict.pop("eval_ds_path")
 
-    train_ds = train_ds.map(_sft_map_fn, fn_kwargs={"tokenizer": tokenizer, "max_length": cfg.max_length})
-    eval_ds  = eval_ds.map(_sft_map_fn, fn_kwargs={"tokenizer": tokenizer, "max_length": cfg.max_length})
+    if not all(isinstance(x, (str, Dataset)) for x in (train_src, eval_src)):
+        raise TypeError(f"Expected str or Dataset, got {type(train_src).__name__!r} / {type(eval_src).__name__!r}")
+    if type(train_src) is not type(eval_src):
+        raise TypeError(f"Types must match: {type(train_src).__name__!r} vs {type(eval_src).__name__!r}")
+
+    _load = lambda x: (load_from_disk(x, keep_in_memory=True) if isinstance(x, str) else x)
+    train_dataset = _load(train_src).map(format_to_messages).map(_sft_map_fn, fn_kwargs={"tokenizer": tokenizer, "max_length": cfg.max_length})
+    eval_dataset  = _load(eval_src).map(format_to_messages).map(_sft_map_fn,  fn_kwargs={"tokenizer": tokenizer, "max_length": cfg.max_length})
 
     scheduler = LinearAlphaScheduler()
     args = SFTConfig(
@@ -368,8 +382,8 @@ def run_training(cfg: TrainingConfig) -> None:
         loss_weight_type="scheduler",
         model=model,
         args=args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
         processing_class=tokenizer
     )
 
@@ -377,17 +391,7 @@ def run_training(cfg: TrainingConfig) -> None:
         trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     finally:
         # Delete stale references to free memory promptly
-        del trainer
-        del model
-        del tokenizer
-        del scheduler
-        del args
-        del train_ds
-        del eval_ds
-        del cfg_dict
-        del resume_from_checkpoint
-
-        # Garbage collect and release CUDA memory
+        del trainer, model, tokenizer, scheduler, args, train_dataset, eval_dataset, cfg_dict, resume_from_checkpoint
         import gc
         gc.collect()
         import torch
