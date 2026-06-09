@@ -15,7 +15,7 @@ from datasets import Dataset, load_from_disk
 from transformers import AutoTokenizer, AutoModelForMaskedLM, DataCollator, PreTrainedTokenizerBase, DefaultDataCollator
 from trl import SFTConfig, SFTTrainer, trainer
 
-from .mdlm_helpers.mdlm_scheduler import make_alpha_scheduler, LinearAlphaScheduler
+from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
 
 
 class CustomForwardSFTTrainer(SFTTrainer):
