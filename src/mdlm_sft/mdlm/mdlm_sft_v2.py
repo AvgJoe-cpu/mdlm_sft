@@ -271,9 +271,8 @@ class TrainingConfig:
     max_length: int = 1024
     shuffle_dataset: bool = True
     dataset_num_proc: Optional[int] = None
-    train_ds_path: str = "train_ds"
-    eval_ds_path: str = "eval_ds"
-
+    train_ds_path: Optional[str] = None
+    eval_ds_path:  Optional[str] = None
     # ── Optimization ─────────────────────────────────────────────────────────
     learning_rate: float = 2e-5
     lr_scheduler_type: str = "cosine"  # "cosine" | "linear" | "constant" | ...#
@@ -356,10 +355,12 @@ def run_training(
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
     model     = AutoModelForMaskedLM.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
 
-    # Always pop both to prevent leaking into SFTConfig
-    train_src = train_ds if train_ds is not None else cfg_dict.pop("train_ds_path")
-    eval_src  = eval_ds  if eval_ds  is not None else cfg_dict.pop("eval_ds_path")
+    train_ds_path = cfg_dict.pop("train_ds_path")
+    eval_ds_path  = cfg_dict.pop("eval_ds_path")
 
+    train_src = train_ds if train_ds is not None else train_ds_path
+    eval_src  = eval_ds  if eval_ds  is not None else eval_ds_path
+    
     if not all(isinstance(x, (str, Dataset)) for x in (train_src, eval_src)):
         raise TypeError(f"Expected str or Dataset, got {type(train_src).__name__!r} / {type(eval_src).__name__!r}")
     if type(train_src) is not type(eval_src):
