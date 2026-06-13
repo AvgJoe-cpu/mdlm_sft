@@ -6,7 +6,6 @@ import math
 import torch
 import torch.nn.functional as F
 
-import pandas as pd
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -36,7 +35,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
     ### signal (the run-to-run jitter you flagged disappears). Train stays unseeded.
     ### `stream` decorrelates the t-draw (0) from the mask-draw (1); process_index
     ### decorrelates DDP ranks. Estimand/expectation are unchanged — only the RNG is fixed.
-    def _eval_rand(self, shape, device, mode, stream: int):
+    def _eval_rand(self, shape: tuple[int, ...] | torch.Size, device: torch.device | str, mode: str, stream: int) -> torch.Tensor:
         if mode != "eval" or not self.deterministic_eval:
             return torch.rand(*shape, device=device)
         seed = (self._eval_seed
@@ -65,12 +64,12 @@ class CustomForwardSFTTrainer(SFTTrainer):
         preprocess_logits_for_metrics: Optional[Any] = None,
         peft_config: Optional[Any] = None,
         formatting_func: Optional[Any] = None,
-
         scheduler: Optional[Any] = None,
         time_epsilon: float = 1e-3,
         loss_weight_type: str = "scheduler",
         deterministic_eval: bool = True,   ### FAITHFUL: reproducible eval noise (see _eval_rand).
         eval_seed: int = 0,                ### FAITHFUL: base seed for eval noise.
+        **kwargs: Any,
     ):
         self.scheduler = scheduler
         self.time_epsilon = time_epsilon
@@ -93,6 +92,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             peft_config=peft_config,
             formatting_func=formatting_func,
+            scheduler=scheduler,
         )
 
         ### FAITHFUL: own scalar accumulators (NO torchmetrics). `_eval_token_sum` counts
@@ -101,7 +101,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
         self._eval_token_sum = 0.0   # Σ over eval set of  maskable-token count   (denominator)
         self._metric_sums = {"train": self._zero_sums(), "eval": self._zero_sums()}
 
-    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+    def compute_loss(self, model: Any, inputs: Dict[str, Any], return_outputs=False, num_items_in_batch=None) -> torch.Tensor | tuple[torch.Tensor, dict]:
         mode = "train" if self.model.training else "eval"
 
         input_ids        = inputs["input_ids"]
@@ -123,7 +123,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
         ) & maskable_mask
         noised_input_ids = torch.where(
             masked_mask, self.processing_class.mask_token_id, input_ids
-        )
+        ) # type: ignore
 
         # 3. forward
         ### CHANGE (P0): removed dead `inputs["use_cache"] = False` (inputs never passed to model()).
@@ -177,9 +177,9 @@ class CustomForwardSFTTrainer(SFTTrainer):
             del log_probs, masked_logits
 
             n_masked       = masked_mask.sum()
-            n_masked_g     = self.accelerator.gather_for_metrics(n_masked).sum()
-            correct_tokens = self.accelerator.gather_for_metrics(correct.sum()).sum()
-            entropy_sum    = self.accelerator.gather_for_metrics(per_token_entropy.sum()).sum()
+            n_masked_g     = self.accelerator.gather_for_metrics(n_masked).sum().item()
+            correct_tokens = self.accelerator.gather_for_metrics(correct.sum()).sum().item()
+            entropy_sum    = self.accelerator.gather_for_metrics(per_token_entropy.sum()).sum().item()
 
             self._metric_sums[mode]["correct"] += correct_tokens.item()
             self._metric_sums[mode]["entropy"] += entropy_sum.item()

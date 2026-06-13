@@ -1,34 +1,65 @@
-from datasets import load_dataset
+import gc
 
-tgt_string = """
-How many more purple flowers are there than yellow flowers? ** There are 80/100 * 10 = <<80/100*10=8>>8 more purple flowers than yellow flowers.
-How many purple flowers are there? ** So in Mark's garden, there are 10 + 8 = <<10+8=18>>18 purple flowers.
-How many flowers are there in total? ** Purple and yellow flowers sum up to 10 + 18 = <<10+18=28>>28 flowers.
-How many green flowers are there? ** That means in Mark's garden there are 25/100 * 28 = <<25/100*28=7>>7 green flowers.
-How many plants does Mark have in his garden? ** So in total Mark has 28 + 7 = <<28+7=35>>35 plants in his garden.
-#### 35
-"""
+from datasets import DatasetDict, load_dataset
+from .utils import normalize_whitespace, add_hash_id, count_tokens_fn
 
 
-# (1) Render - <think> and <answer> tags
-# (1.1) Find '<<' and '>>' pairs: Replace '<<' with '<think>' and '>>' with '</think>
-# (1.2) Find '####' and replace with '<answer>'
-tgt_string = tgt_string.replace("<<", "<think>").replace(">>", "</think>")
-tgt_string = tgt_string.replace("####", "<answer>")
-print(tgt_string)
+def render_thought_process(batch):
+    return {
+        "prompt": batch["question"],
+        "completion": [
+            a.replace("<<", "<think>").replace(">>", "</think>")
+            for a in batch["answer"]
+        ],
+    }
 
+def load_and_process_gsm8k(BATCH_SIZE: int = 1000, OUTPUT_DIR=None) -> DatasetDict:
+    from transformers import AutoTokenizer
+    try:
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        tokenizer.model_max_length = int(1e9)
 
+        dd_main = load_dataset("openai/gsm8k", "main")
+        dd_main = dd_main.map(render_thought_process, batched=True, batch_size=BATCH_SIZE).remove_columns(["question", "answer"])
+        dd_main = (
+            dd_main
+            .map(normalize_whitespace, fn_kwargs={"field_name": "prompt"},                                              batched=True, batch_size=BATCH_SIZE, desc="[main] Normalizing whitespace in prompt")
+            .map(normalize_whitespace, fn_kwargs={"field_name": "completion"},                                          batched=True, batch_size=BATCH_SIZE, desc="[main] Normalizing whitespace in completion")
+            .map(add_hash_id,          fn_kwargs={"field_names": ("prompt", "completion")}, with_indices=True,          batched=True, batch_size=BATCH_SIZE, desc="[main] Adding hash ID")
+            .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "prompt"},                      batched=True, batch_size=BATCH_SIZE, desc="[main] Counting tokens in prompt")
+            .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "completion"},                  batched=True, batch_size=BATCH_SIZE, desc="[main] Counting tokens in completion")
+            .map(lambda x: {"text_token_count": [p + c for p, c in zip(x["prompt_token_count"], x["completion_token_count"])]}, batched=False, desc="[main] Calculating total token count")
+        )
 
-def render_thought_process(example):
-    question = example["question"]
-    answer = example["answer"]
-    answer = answer.replace("####", "<answer>")
-    answer = answer.replace("<<", "<think>").replace(">>", "</think>")
-    return {"prompt": question, "completion": answer}
-    
+        dd_soc = load_dataset("openai/gsm8k", "socratic")
+        dd_soc = dd_soc.map(render_thought_process, batched=True, batch_size=BATCH_SIZE).remove_columns(["question", "answer"])
+        dd_soc = (
+            dd_soc
+            .map(normalize_whitespace, fn_kwargs={"field_name": "prompt"},                                              batched=True, batch_size=BATCH_SIZE, desc="[socratic] Normalizing whitespace in prompt")
+            .map(normalize_whitespace, fn_kwargs={"field_name": "completion"},                                          batched=True, batch_size=BATCH_SIZE, desc="[socratic] Normalizing whitespace in completion")
+            .map(add_hash_id,          fn_kwargs={"field_names": ("prompt", "completion")}, with_indices=True,          batched=True, batch_size=BATCH_SIZE, desc="[socratic] Adding hash ID")
+            .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "prompt"},                      batched=True, batch_size=BATCH_SIZE, desc="[socratic] Counting tokens in prompt")
+            .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "completion"},                  batched=True, batch_size=BATCH_SIZE, desc="[socratic] Counting tokens in completion")
+            .map(lambda x: {"text_token_count": [p + c for p, c in zip(x["prompt_token_count"], x["completion_token_count"])]}, batched=False,desc="[socratic] Calculating total token count")
+        )
+        del tokenizer
+        gc.collect()
 
-raw_ds = load_dataset("openai/gsm8k", "main")
-raw_ds = raw_ds.map(render_thought_process).remove_columns(["question", "answer"])
-print(raw_ds["train"][100])
+        dd = DatasetDict({"main_train":dd_main["train"], "main_test":dd_main["test"], "socratic_train": dd_soc["train"], "socratic_test":  dd_soc["test"]})
+        del dd_main, dd_soc
+        gc.collect()
 
-raw_ds.save_to_disk("artifacts/datasets/base/gsm8k_rendered")
+        print(dd)
+
+        if OUTPUT_DIR is not None:
+            dd.save_to_disk(OUTPUT_DIR)
+            del dd
+            gc.collect()
+            dd = DatasetDict.load_from_disk(OUTPUT_DIR)  # mmap'd, low RSS
+
+        return dd
+
+    finally:
+        gc.collect()
+
+load_and_process_gsm8k()        
