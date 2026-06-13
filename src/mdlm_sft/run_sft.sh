@@ -28,7 +28,24 @@ run_sft() {
         model_name_or_path="${MODEL_PATH}" \
         train_ds_path="${train_path}" \
         eval_ds_path="${eval_path}" \
-        output_dir="${out_path}"
+        output_dir="${out_path}" \
+        per_device_train_batch_size=64 \
+        gradient_accumulation_steps=10 \
+        eval_steps=250 \
+        per_device_eval_batch_size=64 \
+        activation_offloading=false \
+        lr_scheduler_type=cosine \
+        torch_compile=True \
+        warmup_ratio=0.05 \
+        weight_decay=0.1 \
+        learning_rate=5e-4 \
+        adam_beta1=0.88 \
+        adam_beta2=0.98 \
+        max_grad_norm=2.0 \
+        dataloader_num_workers=12 \
+        dataloader_prefetch_factor=12 \
+        max_steps=303 \
+        num_train_epochs=9999
 }
 
 run_sft "/content/writingprompts-strat/strat/strat_train_12pct"  "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_012"
