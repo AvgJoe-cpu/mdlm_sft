@@ -17,532 +17,369 @@ from typing import Optional, Any, Tuple, List
 import math
 import torch
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
+from transformers import PreTrainedTokenizer
+
 
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
-from datasets import Dataset, load_from_disk
-from transformers import (
-    AutoTokenizer,
-    AutoModelForMaskedLM,
-    DataCollator,
-    PreTrainedTokenizerBase,
-)
-from trl import SFTConfig
 
 from mdlm_sft.mdlm.mdlm_sft_v2 import CustomForwardSFTTrainer
 from mdlm_sft.mdlm.mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CoT Trainer (minimal override)
-# ══════════════════════════════════════════════════════════════════════════════
+"""
+MDLM trainer with explicit Diffusion-of-Thoughts (DoT) data contract.
+
+Subclass of `CustomForwardSFTTrainer` that adds ONE thing: enforcement of the
+DoT src_mask contract at the trainer boundary. All MDLM math (corruption,
+schedule-weighted CE, NELBO/bpd/ppl accumulation, reproducible eval noise,
+token-weighted metrics, prediction_step, evaluate-reset) is inherited unchanged.
+
+DoT contract (see HKUNLP/diffusion-of-thoughts train.py L309):
+    nll_loss_mask = attn_mask & (~src_mask).squeeze(-1)
+
+In MDLM-on-SFTTrainer terms this means:
+    maskable positions  ==  (attention_mask & ~src_mask)
+                        ==  (labels != -100)        # collator-provided
+
+Both sides MUST agree. If they don't, the collator is mislabeled and silent
+training corruption would follow — we fail loudly instead.
+"""
+
+from typing import Any, Optional
+
+import torch
 
 
-class CoTSFTTrainer(CustomForwardSFTTrainer):
-    """
-    Chain-of-Thought trainer for MDLM.
-    
-    Extends CustomForwardSFTTrainer with step-level teacher forcing:
-    - Respects `src_mask` to preserve question + previous reasoning steps
-    - Only masks tokens in the current target reasoning step
-    - All other behavior (metrics, eval, logging) inherited unchanged
-    
-    Data collator MUST provide:
-        - input_ids: [question, SEP, prev_step_1, SEP, ..., current_step]
-        - src_mask: 1 for question+prev_steps+SEP, 0 for current_step
-        - labels: copy of input_ids (or -100 for padding)
-    """
 
+class MDLMDoTTrainer(CustomForwardSFTTrainer):
+    # ------------------------------------------------------------------
+    # Step 1 — shell.
+    # ------------------------------------------------------------------
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+
+    # ------------------------------------------------------------------
+    # Step 2 — compute_loss override.
+    # ------------------------------------------------------------------
     def compute_loss(
-        self, model, inputs, return_outputs=False, num_items_in_batch=None
+        self,
+        model,
+        inputs,
+        return_outputs: bool = False,
+        num_items_in_batch: Optional[int] = None,
     ):
-        mode = "train" if self.model.training else "eval"
+        if "src_mask" in inputs:
+            self._assert_dot_contract(inputs)
+            # Parent's model(**...) call only consumes input_ids/attention_mask,
+            # but strip src_mask defensively so no downstream code is surprised
+            # by an unexpected kwarg if the parent ever changes.
+            inputs = {k: v for k, v in inputs.items() if k != "src_mask"}
 
-        input_ids = inputs["input_ids"]
-        labels = inputs["labels"]
+        return super().compute_loss(
+            model,
+            inputs,
+            return_outputs=return_outputs,
+            num_items_in_batch=num_items_in_batch,
+        )
+
+    # ------------------------------------------------------------------
+    # Contract check.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _assert_dot_contract(inputs: dict) -> None:
+        labels         = inputs["labels"]
+        src_mask       = inputs["src_mask"].bool()
         attention_mask = inputs.get("attention_mask", None)
-        src_mask = inputs.get("src_mask", None)  # ← NEW: CoT-specific
 
-        b, l = input_ids.shape
-
-        # ── CHANGE: respect src_mask for CoT reasoning ────────────────────
-        # Standard MDLM: maskable_mask = (labels != -100)
-        # CoT-MDLM: maskable_mask = (labels != -100) & (~src_mask)
-        #           → only mask target region (current reasoning step)
-        if src_mask is not None:
-            maskable_mask = (labels != -100) & (~src_mask)
-        else:
-            # Fallback to standard MDLM if src_mask not provided
-            maskable_mask = labels != -100
-        # ───────────────────────────────────────────────────────────────────
-
-        n_maskable = maskable_mask.sum().clamp_min(1)
-
-        # 1. timesteps (unchanged)
-        t = self.time_epsilon + (1 - self.time_epsilon) * self._eval_rand(
-            (b,), input_ids.device, mode, stream=0
-        )
-        p_mask = 1.0 - self.scheduler(t).unsqueeze(1).expand(b, l)
-
-        # 2. masking (unchanged logic, operates on modified maskable_mask)
-        masked_mask = (
-            self._eval_rand((b, l), input_ids.device, mode, stream=1) < p_mask
-        ) & maskable_mask
-
-        noised_input_ids = torch.where(
-            masked_mask, self.processing_class.mask_token_id, input_ids
-        )
-
-        # 3. forward (unchanged)
-        outputs = model(input_ids=noised_input_ids, attention_mask=attention_mask)
-
-        masked_logits = outputs.logits[masked_mask].float()
-        masked_targets = input_ids[masked_mask]
-        del outputs
-
-        # 4. weights (unchanged)
-        if self.loss_weight_type == "scheduler":
-            loss_weights = (
-                self.scheduler.weight(t).unsqueeze(1).expand(b, l)[masked_mask]
-            )
-        else:
-            loss_weights = 1.0
-
-        # 5. CE (unchanged)
-        assert (input_ids[maskable_mask] == labels[maskable_mask]).all(), (
-            "Mismatch between input_ids and labels at valid positions"
-        )
-        ce = F.cross_entropy(masked_logits, masked_targets, reduction="none")
-
-        # 6. loss (unchanged)
-        local_loss = (ce * loss_weights).sum() / n_maskable
-        if num_items_in_batch is not None:
-            loss = local_loss * (n_maskable / num_items_in_batch)
-        else:
-            loss = local_loss
-
-        # ── metrics (unchanged) ───────────────────────────────────────────
-        with torch.no_grad():
-            if mode == "train":
-                if attention_mask is not None:
-                    num_tokens_in_batch = (
-                        self.accelerator.gather_for_metrics(attention_mask.sum())
-                        .sum()
-                        .item()
-                    )
-                else:
-                    local_count = torch.tensor(l, device=input_ids.device)
-                    num_tokens_in_batch = (
-                        self.accelerator.gather_for_metrics(local_count).sum().item()
-                    )
-                self._total_train_tokens += num_tokens_in_batch
-            self._metrics[mode]["num_tokens"] = [self._total_train_tokens]
-
-            log_probs = torch.log_softmax(masked_logits, dim=-1)
-            per_token_entropy = -(log_probs.exp() * log_probs).sum(dim=-1)
-            correct = masked_logits.argmax(dim=-1) == masked_targets
-            del log_probs, masked_logits
-
-            n_masked = masked_mask.sum()
-            n_masked_g = self.accelerator.gather_for_metrics(n_masked).sum()
-            correct_tokens = self.accelerator.gather_for_metrics(correct.sum()).sum()
-            entropy_sum = (
-                self.accelerator.gather_for_metrics(per_token_entropy.sum()).sum()
+        # Shape sanity — cheap, catches collator bugs early.
+        if src_mask.shape != labels.shape:
+            raise AssertionError(
+                f"DoT contract: src_mask shape {tuple(src_mask.shape)} "
+                f"!= labels shape {tuple(labels.shape)}. "
+                f"Check collator output."
             )
 
-            self._metric_sums[mode]["correct"] += correct_tokens.item()
-            self._metric_sums[mode]["entropy"] += entropy_sum.item()
-            self._metric_sums[mode]["tokens"] += n_masked_g.item()
+        # Derive the DoT-faithful maskable mask.
+        if attention_mask is not None:
+            dot_maskable = attention_mask.bool() & ~src_mask
+        else:
+            dot_maskable = ~src_mask
 
-            if mode == "eval":
-                w = self.scheduler.weight(t).unsqueeze(1).expand(b, l)[masked_mask]
-                batch_nll = (w.double() * ce.double()).sum()
-                batch_toks = maskable_mask.sum()
-                batch_nll = (
-                    self.accelerator.gather_for_metrics(batch_nll).sum().item()
-                )
-                batch_toks = (
-                    self.accelerator.gather_for_metrics(batch_toks).sum().item()
-                )
-                self._eval_nll_sum += batch_nll
-                self._eval_token_sum += batch_toks
-                self._eval_step += 1
+        labels_maskable = labels != -100
 
-        return (loss, {}) if return_outputs else loss
+        if torch.equal(dot_maskable, labels_maskable):
+            return
+
+        # Detailed diagnostic — split the disagreement so the user knows
+        # which side of the contract is wrong.
+        n_total           = dot_maskable.numel()
+        n_mismatch        = (dot_maskable != labels_maskable).sum().item()
+        n_train_not_lbl   = (dot_maskable & ~labels_maskable).sum().item()
+        n_lbl_not_train   = (~dot_maskable & labels_maskable).sum().item()
+        raise AssertionError(
+            "DoT contract violated: (attention_mask & ~src_mask) disagrees "
+            "with (labels != -100).\n"
+            f"  positions total:                                  {n_total}\n"
+            f"  positions disagreeing:                            {n_mismatch}\n"
+            f"  in (attn & ~src) but labels==-100 (under-trained): {n_train_not_lbl}\n"
+            f"  in labels!=-100 but src or pad (over-trained):     {n_lbl_not_train}\n"
+            "Fix: ensure the collator sets labels=-100 on EXACTLY "
+            "(src_mask | ~attention_mask) positions."
+        )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CoT Data Collator
-# ══════════════════════════════════════════════════════════════════════════════
+#### COLLATE FN 
+# raw row                tokenized row                       batch dict
+# ─────────              ─────────────                       ──────────
+# {                      {                                   {
+#   "src": str,    ──►     "src_ids": List[int],     ──►       "input_ids":      LongTensor [B, L],
+#   "tgt": List[str]       "tgt_ids_list": List[List[int]]     "attention_mask": BoolTensor [B, L],
+# }                      }                                     "src_mask":       BoolTensor [B, L],
+#                                                              "labels":         LongTensor [B, L],
+#                                                            }
+#    (dataset)        Dataset.map(tokenize_fn)            cot_collate_fn(batch)        
 
 
-@dataclass
-class CoTDataCollator:
-    """
-    Collates Chain-of-Thought examples for step-level teacher forcing.
-    
-    Expected dataset format:
-        {
-            'question_tokens': List[int],              # question token IDs
-            'reasoning_steps': List[List[int]],        # list of reasoning step token IDs
-            'sep_token_id': int,                       # separator token
-        }
-    
-    Generates multiple training examples per problem:
-        - Example 0: question → step_0
-        - Example 1: question + step_0 → step_1
-        - Example 2: question + step_0 + step_1 → step_2
-        - ...
-    
-    Output batch includes `src_mask` to mark context (question + prev steps).
-    """
+_DEFAULT_RNG = random.Random()
 
-    tokenizer: PreTrainedTokenizerBase
-    max_length: int = 1024
-    expand_per_batch: bool = True  # If False, randomly sample one split per item
+def cot_collate_fn(
+    batch: list[dict],
+    *,
+    sep_id: int,
+    pad_id: int,
+    eos_id: int,
+    cot: bool = True,
+    seq_len: Optional[int] = None,
+    rng: Optional[random.Random] = None,
+) -> dict[str, torch.Tensor]:
+    rng = rng if rng is not None else _DEFAULT_RNG
 
-    def __call__(self, examples: List[dict]) -> dict[str, torch.Tensor]:
-        """
-        Collate examples with CoT reasoning structure.
-        
-        Args:
-            examples: List of dicts with 'question_tokens', 'reasoning_steps', 'sep_token_id'
-        
-        Returns:
-            Batch dict with input_ids, attention_mask, labels, src_mask
-        """
-        expanded = []
-        
-        for ex in examples:
-            question = ex["question_tokens"]
-            steps = ex["reasoning_steps"]
-            sep_id = ex.get("sep_token_id", self.tokenizer.sep_token_id)
-            
-            # Determine how many training examples to create from this item
-            if self.expand_per_batch:
-                # Create one example per reasoning step (DoT-style expansion)
-                splits = list(range(len(steps)))
+    sequences: list[torch.Tensor] = []
+    src_lens:  list[int] = []
+
+    for row in batch:
+        # Defensive copies — never mutate caller-owned lists.
+        prompt_ids:     list[int]       = list(row["prompt_ids"])
+        chunks_ids:     list[list[int]] = [list(c) for c in row["rationale_chunks_ids"]]
+        completion_ids: list[int]       = list(row["completion_ids"])
+
+        assert len(completion_ids) > 0, (
+            "DoT collator: completion_ids is empty — filter such rows in data prep."
+        )
+        n_chunks = len(chunks_ids)
+
+        # ── Pick stage k ∈ [0, n_chunks]. k == n_chunks means "predict completion".
+        if cot:
+            k = rng.randint(0, n_chunks)   # inclusive on both ends
+        else:
+            k = n_chunks                   # always predict completion
+
+        # ── Build src = prompt + chunks[:k] ──────────────────────────────────
+        src_ids: list[int] = list(prompt_ids)
+        for prev in chunks_ids[:k]:
+            src_ids.extend(prev)
+
+        # ── Pick tgt + EOS rule ──────────────────────────────────────────────
+        if k < n_chunks:
+            # Predicting an intermediate reasoning step. No EOS — the rationale
+            # isn't done, and inference will continue with another step.
+            tgt_ids = chunks_ids[k]
+            append_eos = False
+        else:
+            # Predicting the final answer. EOS marks "rationale + answer done."
+            # In no-cot mode we additionally pull all rationale chunks into tgt.
+            if cot:
+                tgt_ids = list(completion_ids)
             else:
-                # Randomly sample one split (more predictable batch size)
-                splits = [random.randint(0, len(steps) - 1)]
-            
-            for step_idx in splits:
-                # Source: question + previous steps + SEP
-                src = question.copy()
-                for prev_idx in range(step_idx):
-                    src.append(sep_id)
-                    src.extend(steps[prev_idx])
-                src.append(sep_id)
-                
-                # Target: current step
-                tgt = steps[step_idx]
-                
-                # Full sequence
-                full_seq = src + tgt
-                src_len = len(src)
-                
-                # Truncate if needed
-                if len(full_seq) > self.max_length:
-                    # Try to keep target intact
-                    tgt_len = len(tgt)
-                    if tgt_len < self.max_length:
-                        src_truncated = src[-(self.max_length - tgt_len):]
-                        full_seq = src_truncated + tgt
-                        src_len = len(src_truncated)
-                    else:
-                        # Target too long, truncate both
-                        full_seq = full_seq[:self.max_length]
-                        src_len = min(src_len, self.max_length)
-                
-                expanded.append({
-                    "input_ids": full_seq,
-                    "src_len": src_len,
-                })
-        
-        # Convert to tensors and pad
-        input_ids = [torch.tensor(ex["input_ids"], dtype=torch.long) for ex in expanded]
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
-        )
-        
-        # Create masks
-        src_lens = torch.tensor([ex["src_len"] for ex in expanded], dtype=torch.long)
-        seq_lens = torch.tensor([len(ex["input_ids"]) for ex in expanded], dtype=torch.long)
-        
-        # src_mask: 1 for question+prev_steps+SEP, 0 for current_step
-        src_mask = (
-            torch.arange(input_ids.shape[1])[None, :] < src_lens[:, None]
-        )
-        
-        # attention_mask: 1 for real tokens, 0 for padding
-        attention_mask = (
-            torch.arange(input_ids.shape[1])[None, :] < seq_lens[:, None]
-        )
-        
-        # labels: -100 for padding, input_ids elsewhere
-        labels = input_ids.clone()
-        labels[~attention_mask] = -100
-        
-        return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-            "src_mask": src_mask,  # NEW: marks context region
-        }
+                tgt_ids = [tok for c in chunks_ids for tok in c] + completion_ids
+            append_eos = True
 
+        if append_eos:
+            tgt_ids = tgt_ids + [eos_id]
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Dataset Processing
-# ══════════════════════════════════════════════════════════════════════════════
+        # ── seq_len truncation: tgt is sacred, src is left-trimmed, +1 for SEP ─
+        if seq_len is not None:
+            tgt_ids = tgt_ids[: seq_len - 1]
+            src_budget = seq_len - len(tgt_ids) - 1
+            if src_budget <= 0:
+                src_ids = []
+            elif src_budget < len(src_ids):
+                src_ids = src_ids[-src_budget:]
 
+        seq = src_ids + [sep_id] + tgt_ids
+        sequences.append(torch.tensor(seq, dtype=torch.int64))
+        src_lens.append(len(src_ids) + 1)   # +1: SEP belongs to src side
 
-def parse_gsm8k_reasoning(text: str) -> List[str]:
-    """
-    Parse GSM8K reasoning chain into steps.
-    
-    Format: "<<step1>> <<step2>> ... #### answer"
-    Returns: ["<<step1>>", "<<step2>>", ..., "#### answer"]
-    """
-    # Split on spaces, but keep << >> blocks together
-    parts = []
-    current = []
-    in_block = False
-    
-    for char in text:
-        if char == '<' and len(current) > 0 and current[-1] == '<':
-            in_block = True
-        elif char == '>' and len(current) > 0 and current[-1] == '>':
-            in_block = False
-            current.append(char)
-            parts.append(''.join(current))
-            current = []
-            continue
-        elif char == ' ' and not in_block and current:
-            part = ''.join(current).strip()
-            if part and part not in ['<<', '>>']:
-                parts.append(part)
-            current = []
-            continue
-        
-        current.append(char)
-    
-    if current:
-        parts.append(''.join(current).strip())
-    
-    # Group into reasoning steps
-    steps = []
-    for part in parts:
-        if part.startswith('<<') or part.startswith('####'):
-            steps.append(part)
-    
-    return steps if steps else [text]  # Fallback to full text if parsing fails
+    # ── Pad to BATCH max ────────────────────────────────────────────────────
+    input_ids = pad_sequence(sequences, batch_first=True, padding_value=pad_id)
+    B, L = input_ids.shape
 
+    pos        = torch.arange(L).unsqueeze(0).expand(B, -1)
+    lengths    = torch.tensor([len(s) for s in sequences], dtype=torch.long)
+    src_lens_t = torch.tensor(src_lens,                    dtype=torch.long)
 
-def format_cot_example(
-    example: dict, tokenizer: PreTrainedTokenizerBase
-) -> dict:
-    """
-    Convert raw example to CoT format with tokenized reasoning steps.
-    
-    Expected input:
-        {
-            'prompt': "Question text",
-            'completion': "<<step1>> <<step2>> #### answer"
-        }
-    
-    Output:
-        {
-            'question_tokens': List[int],
-            'reasoning_steps': List[List[int]],
-            'sep_token_id': int
-        }
-    """
-    question = example["prompt"]
-    reasoning_text = example["completion"]
-    
-    # Parse reasoning into steps
-    reasoning_steps_text = parse_gsm8k_reasoning(reasoning_text)
-    
-    # Tokenize
-    question_tokens = tokenizer.encode(question, add_special_tokens=False)
-    reasoning_steps = [
-        tokenizer.encode(step, add_special_tokens=False)
-        for step in reasoning_steps_text
-    ]
-    
+    attention_mask = pos < lengths.unsqueeze(1)
+    src_mask       = pos < src_lens_t.unsqueeze(1)
+
+    labels = input_ids.clone()
+    labels[src_mask | ~attention_mask] = -100
+
     return {
-        "question_tokens": question_tokens,
-        "reasoning_steps": reasoning_steps,
-        "sep_token_id": tokenizer.sep_token_id or tokenizer.eos_token_id,
+        "input_ids":      input_ids,
+        "attention_mask": attention_mask,
+        "src_mask":       src_mask,
+        "labels":         labels,
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Training Config
-# ══════════════════════════════════════════════════════════════════════════════
+def _dot_map_fn(example: dict[str, str | list[str]], tokenizer: PreTrainedTokenizer) -> dict[str, list[int] | list[list[int]]]:
+    prompt_ids        = tokenizer(example["prompt"],     add_special_tokens=False).input_ids
+    completion_ids    = tokenizer(example["completion"], add_special_tokens=False).input_ids
+    chunks_ids        = [tokenizer(c, add_special_tokens=False).input_ids
+                         for c in example["rationale_chunks"]]
+    return {
+        "prompt_ids":           prompt_ids,
+        "rationale_chunks_ids": chunks_ids,
+        "completion_ids":       completion_ids,
+    }
 
-
-@dataclass
-class CoTTrainingConfig:
-    """Training configuration for CoT-MDLM."""
-    
-    # ── Experiment identity ───────────────────────────────────────────────
-    output_dir: str = "output/cot-mdlm"
-    model_name_or_path: str = "bert-base-uncased"
-    run_name: Optional[str] = "cot-mdlm"
-    seed: int = 42
-    resume_from_checkpoint: Optional[str] = None
-
-    # ── Data ──────────────────────────────────────────────────────────────
-    max_length: int = 1024
-    shuffle_dataset: bool = True
-    dataset_num_proc: Optional[int] = None
-    train_ds_path: str = "train_ds"
-    eval_ds_path: str = "eval_ds"
-    expand_per_batch: bool = True  # NEW: expand each problem into multiple examples
-
-    # ── Optimization ──────────────────────────────────────────────────────
-    learning_rate: float = 2e-5
-    lr_scheduler_type: str = "cosine"
-    warmup_ratio: Optional[float] = 0.03
-    warmup_steps: int = 0
-    weight_decay: float = 0.0
-    adam_beta1: float = 0.9
-    adam_beta2: float = 0.999
-    adam_epsilon: float = 1e-8
-    max_grad_norm: float = 1.0
-
-    # ── Training loop ─────────────────────────────────────────────────────
-    per_device_train_batch_size: int = 2
-    gradient_accumulation_steps: int = 1
-    num_train_epochs: float = 5.0
-    max_steps: int = -1
-    bf16: bool = True
-
-    # ── Eval ──────────────────────────────────────────────────────────────
-    per_device_eval_batch_size: int = 1
-    eval_strategy: str = "steps"
-    eval_steps: int = 100
-    eval_on_start: bool = True
-    metric_for_best_model: str = "eval_nll"
-    greater_is_better: bool = False
-    load_best_model_at_end: bool = False
-
-    # ── Logging ───────────────────────────────────────────────────────────
-    logging_steps: int = 25
-    report_to: str = "wandb"
-    project: Optional[str] = "CoT-MDLM"
-
-    # ── Memory & performance ──────────────────────────────────────────────
-    gradient_checkpointing: bool = False
-    activation_offloading: bool = True
-    torch_compile: bool = True
-    use_liger_kernel: bool = True
-    dataloader_num_workers: int = 8
-    dataloader_prefetch_factor: int = 8
-    dataloader_pin_memory: bool = True
-    dataloader_persistent_workers: bool = True
-
-
-cs = ConfigStore.instance()
-cs.store(name="cot_config", node=CoTTrainingConfig)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Training Runner
-# ══════════════════════════════════════════════════════════════════════════════
-
-
-def run_cot_training(cfg: CoTTrainingConfig) -> None:
-    """Main training loop for CoT-MDLM."""
-    
-    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-    model_name_or_path = cfg_dict.pop("model_name_or_path")
-    resume_from_checkpoint = cfg_dict.pop("resume_from_checkpoint", None)
-    expand_per_batch = cfg_dict.pop("expand_per_batch", True)
-
-    # Load model and tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_name_or_path, trust_remote_code=True
-    )
-    model = AutoModelForMaskedLM.from_pretrained(
-        model_name_or_path, trust_remote_code=True
-    )
-
-    # Load and process datasets
-    train_ds_path = cfg_dict.pop("train_ds_path")
-    eval_ds_path = cfg_dict.pop("eval_ds_path")
-    
-    train_ds = load_from_disk(train_ds_path, keep_in_memory=True)
-    eval_ds = load_from_disk(eval_ds_path, keep_in_memory=True)
-
-    # Convert to CoT format
-    train_ds = train_ds.map(
-        format_cot_example,
-        fn_kwargs={"tokenizer": tokenizer},
-        desc="Formatting train CoT examples",
-    )
-    eval_ds = eval_ds.map(
-        format_cot_example,
-        fn_kwargs={"tokenizer": tokenizer},
-        desc="Formatting eval CoT examples",
-    )
-
-    # Create CoT-specific data collator
-    data_collator = CoTDataCollator(
-        tokenizer=tokenizer,
-        max_length=cfg.max_length,
-        expand_per_batch=expand_per_batch,
-    )
-
-    # Setup scheduler and training args
-    scheduler = LinearAlphaScheduler()
-    args = SFTConfig(
-        **cfg_dict,
-        logging_first_step=True,
-        dataset_kwargs={"skip_prepare_dataset": True},
-        gradient_checkpointing_kwargs={"use_reentrant": False},
-    )
-
-    # Create CoT trainer
-    trainer = CoTSFTTrainer(
-        scheduler=scheduler,
-        time_epsilon=1e-3,
-        loss_weight_type="scheduler",
-        model=model,
-        args=args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        processing_class=tokenizer,
-        data_collator=data_collator,  # NEW: CoT-specific collator
-    )
-
-    try:
-        trainer.train(resume_from_checkpoint=resume_from_checkpoint)
-    finally:
-        # Cleanup
-        del trainer, model, tokenizer, scheduler, args
-        del train_ds, eval_ds, data_collator
-        del cfg_dict, resume_from_checkpoint
-
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-
-@hydra.main(version_base=None, config_name="cot_config")
-def main(cfg: CoTTrainingConfig) -> None:
-    """Hydra entry point."""
-    print("═" * 80)
-    print("Chain-of-Thought MDLM Training")
-    print("═" * 80)
-    print(OmegaConf.to_yaml(cfg))
-    print("═" * 80)
-    run_cot_training(cfg)
-
-
+# ─── end-to-end smoke test ───────────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+    import random
+    from datasets import Dataset, Features, Sequence, Value
+
+    # ── 1. Tiny vocabulary + mock tokenizer ─────────────────────────────────
+    _WORDS = [
+        "[PAD]", "[EOS]", "[SEP]",
+        "What", "is", "2", "3", "5", "+", "?",
+        "First", "note", "that", "Second", "add", "the",
+        "numbers", "together", "answer", "So", "result", ".",
+    ]
+    _tok2id = {w: i for i, w in enumerate(_WORDS)}
+
+    PAD_ID = _tok2id["[PAD]"]   # 0
+    EOS_ID = _tok2id["[EOS]"]   # 1
+    SEP_ID = _tok2id["[SEP]"]   # 2
+
+    class _MockTokenizer:
+        """Whitespace-split tokenizer; unknown words map to PAD (0)."""
+        class _Enc:
+            def __init__(self, ids: list[int]) -> None:
+                self.input_ids = ids
+
+        def __call__(self, text: str, add_special_tokens: bool = False) -> "_Enc":
+            return self._Enc([_tok2id.get(w, PAD_ID) for w in text.split()])
+
+    tokenizer = _MockTokenizer()
+
+    # ── 2. Synthetic raw rows ────────────────────────────────────────────────
+    raw_rows = [
+        {   # two reasoning steps — full CoT path
+            "prompt": "What is 2 + 3 ?",
+            "rationale_chunks": [
+                "First note that 2 + 3",
+                "Second add the numbers together .",
+            ],
+            "completion": "So the answer is 5 .",
+        },
+        {   # one reasoning step
+            "prompt": "What is 5 + 2 ?",
+            "rationale_chunks": [
+                "First note that 5 + 2",
+            ],
+            "completion": "the result is 5 .",
+        },
+        {   # zero reasoning steps — edge case: predict completion directly
+            "prompt": "What is 3 + 2 ?",
+            "rationale_chunks": [],
+            "completion": "the answer is 5 .",
+        },
+    ]
+
+    # ── 3. Dataset.from_list + tokenize ─────────────────────────────────────
+    # Declare explicit Arrow features so nested Sequence(Sequence(...)) is
+    # round-tripped correctly even when inner lists differ in length.
+    tok_features = Features({
+        "prompt_ids":           Sequence(Value("int64")),
+        "rationale_chunks_ids": Sequence(Sequence(Value("int64"))),
+        "completion_ids":       Sequence(Value("int64")),
+    })
+
+    ds = Dataset.from_list(raw_rows)
+    ds = ds.map(
+        lambda ex: _dot_map_fn(ex, tokenizer),
+        features=tok_features,
+        remove_columns=["prompt", "rationale_chunks", "completion"],
+    )
+    ds = ds.with_format("python")   # return Python lists, not Arrow scalars
+
+    print("── Tokenised dataset ────────────────────────────────────────────")
+    for i in range(len(ds)):
+        row = ds[i]
+        print(
+            f"  row {i} | prompt_ids={row['prompt_ids']}"
+            f" | n_chunks={len(row['rationale_chunks_ids'])}"
+            f" | completion_ids={row['completion_ids']}"
+        )
+
+    # ── 4. Run the collator ──────────────────────────────────────────────────
+    rng   = random.Random(42)           # fixed seed → reproducible stage k
+    batch = [ds[i] for i in range(len(ds))]
+
+    out = cot_collate_fn(
+        batch,
+        sep_id  = SEP_ID,
+        pad_id  = PAD_ID,
+        eos_id  = EOS_ID,
+        cot     = True,
+        seq_len = None,
+        rng     = rng,
+    )
+
+    B, L = out["input_ids"].shape
+    print(f"\n── Batch: {B} rows × {L} positions ─────────────────────────────")
+    for key, tensor in out.items():
+        print(f"  {key:15s}: shape={tuple(tensor.shape)}  dtype={tensor.dtype}")
+
+    print("\n── Per-row trainable-token breakdown ────────────────────────────")
+    for i in range(B):
+        n_train = (out["labels"][i] != -100).sum().item()
+        n_seq   = out["attention_mask"][i].sum().item()
+        n_src   = out["src_mask"][i].sum().item()
+        print(
+            f"  row {i}: src={n_src:2d}  target={n_train:2d}  "
+            f"pad={L - n_seq:2d}  total_seq={n_seq:2d}/{L}"
+        )
+
+    # ── 5. Correctness assertions ────────────────────────────────────────────
+    src_or_pad = out["src_mask"] | ~out["attention_mask"]
+    target_pos = out["attention_mask"] & ~out["src_mask"]
+
+    # A: labels == -100 on every src/pad position
+    assert (out["labels"][src_or_pad] == -100).all(), (
+        "FAIL A: labels should be -100 on src/pad positions"
+    )
+
+    # B: labels hold real token ids on every target position
+    assert (out["labels"][target_pos] != -100).all(), (
+        "FAIL B: labels should hold real token ids on target positions"
+    )
+
+    # C: every row has at least one trainable token
+    for i in range(B):
+        n = (out["labels"][i] != -100).sum().item()
+        assert n > 0, f"FAIL C: row {i} has zero trainable tokens"
+
+    # D: full DoT contract (mirrors MDLMDoTTrainer._assert_dot_contract)
+    #    This is the exact check the trainer runs at training time.
+    MDLMDoTTrainer._assert_dot_contract({
+        "labels":         out["labels"],
+        "src_mask":       out["src_mask"],
+        "attention_mask": out["attention_mask"],
+    })
+
+    print("\n✓  All assertions passed — collator satisfies the DoT contract.")

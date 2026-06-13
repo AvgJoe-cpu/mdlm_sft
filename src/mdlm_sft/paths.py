@@ -1,12 +1,10 @@
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
-print(f"Project root directory: {PROJECT_ROOT}")
 
 # Resolve nested artifact directories
 ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
 DATASETS_DIR = ARTIFACTS_DIR / "datasets"
-print(f"Datasets directory: {DATASETS_DIR}")
 
 # Config directories
 CONFIG_DIR = PROJECT_ROOT / "config"
