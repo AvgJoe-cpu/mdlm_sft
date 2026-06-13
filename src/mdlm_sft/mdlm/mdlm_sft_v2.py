@@ -64,18 +64,21 @@ class CustomForwardSFTTrainer(SFTTrainer):
         preprocess_logits_for_metrics: Optional[Any] = None,
         peft_config: Optional[Any] = None,
         formatting_func: Optional[Any] = None,
+        alpha_scheduler: Optional[Any] = None,        # ← MUST be here (parameter)
         time_epsilon: float = 1e-3,
         loss_weight_type: str = "scheduler",
-        deterministic_eval: bool = True,   ### FAITHFUL: reproducible eval noise (see _eval_rand).
-        eval_seed: int = 0,                ### FAITHFUL: base seed for eval noise.
+        deterministic_eval: bool = True,
+        eval_seed: int = 0,
         **kwargs: Any,
     ):
-        self.alpha_scheduler = alpha_scheduler
-        self.time_epsilon = time_epsilon
-        self.loss_weight_type = loss_weight_type
-        self.deterministic_eval = deterministic_eval   ### FAITHFUL
-        self._eval_seed = eval_seed                     ### FAITHFUL
-        self._eval_step = 0                             ### FAITHFUL: per-eval batch counter (reset in evaluate()).
+        # Custom fields — set BEFORE super().__init__
+        self.alpha_scheduler    = alpha_scheduler     # ← reads the parameter above
+        self.time_epsilon       = time_epsilon
+        self.loss_weight_type   = loss_weight_type
+        self.deterministic_eval = deterministic_eval
+        self._eval_seed         = eval_seed
+        self._eval_step         = 0
+
         super().__init__(
             model=model,
             args=args,
@@ -91,11 +94,8 @@ class CustomForwardSFTTrainer(SFTTrainer):
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             peft_config=peft_config,
             formatting_func=formatting_func,
-            alpha_scheduler=alpha_scheduler,
         )
 
-        ### FAITHFUL: own scalar accumulators (NO torchmetrics). `_eval_token_sum` counts
-        ### ALL assistant tokens (the dimension), not the masked subset -> bits/assistant-token.
         self._eval_nll_sum   = 0.0   # Σ over eval set of  w(t)·CE   (weighted NELBO numerator)
         self._eval_token_sum = 0.0   # Σ over eval set of  maskable-token count   (denominator)
         self._metric_sums = {"train": self._zero_sums(), "eval": self._zero_sums()}
@@ -180,10 +180,9 @@ class CustomForwardSFTTrainer(SFTTrainer):
             correct_tokens = self.accelerator.gather_for_metrics(correct.sum()).sum().item()
             entropy_sum    = self.accelerator.gather_for_metrics(per_token_entropy.sum()).sum().item()
 
-            self._metric_sums[mode]["correct"] += correct_tokens.item()
-            self._metric_sums[mode]["entropy"] += entropy_sum.item()
-            self._metric_sums[mode]["tokens"]  += n_masked_g.item()
-
+            self._metric_sums[mode]["correct"] += correct_tokens
+            self._metric_sums[mode]["entropy"] += entropy_sum
+            self._metric_sums[mode]["tokens"]  += n_masked_g
             ### FAITHFUL: EVAL-ONLY continuous-time NELBO per assistant token (MDLM-faithful).
             ###   numerator  = Σ_masked w(t)·CE   with w(t) = -α'/(1-α)  (=1/t for linear)
             ###   denominator= Σ maskable          (ALL assistant tokens, masked or not)
@@ -309,9 +308,8 @@ class TrainingConfig:
     # ── Memory & performance ─────────────────────────────────────────────────
     gradient_checkpointing: bool = False
     activation_offloading: bool = True
-    torch_compile: bool = True
-    torch_compile_mode: str = "reduce-overhead"    
-    use_liger_kernel: bool = True
+    torch_compile: bool = False
+    use_liger_kernel: bool = False
     dataloader_num_workers: int = 8
     dataloader_prefetch_factor: int = 8
     dataloader_pin_memory: bool = True
@@ -390,6 +388,8 @@ def run_training(
 
     try:
         trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+        trainer.save_model(args.output_dir)
+
     finally:
         # Delete stale references to free memory promptly
         del trainer, model, tokenizer, scheduler, args, train_dataset, eval_dataset, cfg_dict, resume_from_checkpoint
