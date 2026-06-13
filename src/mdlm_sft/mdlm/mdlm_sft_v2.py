@@ -64,14 +64,14 @@ class CustomForwardSFTTrainer(SFTTrainer):
         preprocess_logits_for_metrics: Optional[Any] = None,
         peft_config: Optional[Any] = None,
         formatting_func: Optional[Any] = None,
-        scheduler: Optional[Any] = None,
+        alpha_scheduler: Optional[Any] = None,
         time_epsilon: float = 1e-3,
         loss_weight_type: str = "scheduler",
         deterministic_eval: bool = True,   ### FAITHFUL: reproducible eval noise (see _eval_rand).
         eval_seed: int = 0,                ### FAITHFUL: base seed for eval noise.
         **kwargs: Any,
     ):
-        self.scheduler = scheduler
+        self.alpha_scheduler = alpha_scheduler
         self.time_epsilon = time_epsilon
         self.loss_weight_type = loss_weight_type
         self.deterministic_eval = deterministic_eval   ### FAITHFUL
@@ -92,7 +92,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             peft_config=peft_config,
             formatting_func=formatting_func,
-            scheduler=scheduler,
+            alpha_scheduler=alpha_scheduler,
         )
 
         ### FAITHFUL: own scalar accumulators (NO torchmetrics). `_eval_token_sum` counts
@@ -115,7 +115,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
         # 1. timesteps
         ### FAITHFUL: route both noise draws through _eval_rand (seeded in eval, raw in train).
         t = self.time_epsilon + (1 - self.time_epsilon) * self._eval_rand((b,), input_ids.device, mode, stream=0)
-        p_mask = 1.0 - self.scheduler(t).unsqueeze(1).expand(b, l)
+        p_mask = 1.0 - self.alpha_scheduler(t).unsqueeze(1).expand(b, l)
 
         # 2. masking
         masked_mask = (
@@ -139,7 +139,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
         # 4. weights (TRAINING gradient only)
         ### CHANGE (P0): gathered on the masked subset -> [N], no [B,L] temporary.
         if self.loss_weight_type == "scheduler":
-            loss_weights = self.scheduler.weight(t).unsqueeze(1).expand(b, l)[masked_mask]  # [N]
+            loss_weights = self.alpha_scheduler.weight(t).unsqueeze(1).expand(b, l)[masked_mask]  # [N]
         else:
             loss_weights = 1.0
 
@@ -191,7 +191,7 @@ class CustomForwardSFTTrainer(SFTTrainer):
             ### Always weighted, regardless of loss_weight_type (eval must be schedule-faithful;
             ### the training gradient's weighting is a separate, orthogonal choice).
             if mode == "eval":
-                w = self.scheduler.weight(t).unsqueeze(1).expand(b, l)[masked_mask]   # [N]
+                w = self.alpha_scheduler.weight(t).unsqueeze(1).expand(b, l)[masked_mask]   # [N]
                 batch_nll  = (w.double() * ce.double()).sum()                        ### FAITHFUL: fp64 sum.
                 batch_toks = maskable_mask.sum()
                 batch_nll  = self.accelerator.gather_for_metrics(batch_nll).sum().item()
@@ -379,7 +379,7 @@ def run_training(
     )
 
     trainer = CustomForwardSFTTrainer(
-        scheduler=scheduler,
+        alpha_scheduler=scheduler,
         time_epsilon=1e-3,
         loss_weight_type="scheduler",
         model=model,
