@@ -48,10 +48,10 @@ run_sft() {
         num_train_epochs=9999
 }
 
-run_sft "/content/writingprompts-strat/strat/strat_train_12pct"  "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_012"
-run_sft "/content/writingprompts-strat/strat/strat_train_25pct"  "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_025"
-run_sft "/content/writingprompts-strat/strat/strat_train_50pct"  "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_050"
-run_sft "/content/writingprompts-strat/strat/strat_train_100pct" "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_100"
+run_sft "/content/writingprompts-strat/strat_train_12pct"  "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_012"
+run_sft "/content/writingprompts-strat/strat_train_25pct"  "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_025"
+run_sft "/content/writingprompts-strat/strat_train_50pct"  "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_050"
+run_sft "/content/writingprompts-strat/strat_train_100pct" "/content/writingprompts-strat/strat_eval" "/content/wrp-strat-outdir_100"
 
 echo ""
 echo "✓ All runs complete."
