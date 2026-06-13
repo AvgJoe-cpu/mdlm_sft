@@ -64,7 +64,6 @@ class CustomForwardSFTTrainer(SFTTrainer):
         preprocess_logits_for_metrics: Optional[Any] = None,
         peft_config: Optional[Any] = None,
         formatting_func: Optional[Any] = None,
-        alpha_scheduler: Optional[Any] = None,
         time_epsilon: float = 1e-3,
         loss_weight_type: str = "scheduler",
         deterministic_eval: bool = True,   ### FAITHFUL: reproducible eval noise (see _eval_rand).
