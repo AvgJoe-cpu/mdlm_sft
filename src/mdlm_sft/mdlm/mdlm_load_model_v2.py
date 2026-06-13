@@ -117,4 +117,5 @@ def download_base_model() -> None:
     model.save_pretrained(str(chat_path))
     tokenizer.save_pretrained(str(chat_path))
 
-download_base_model()
+if __name__ == "__main__":
+    download_base_model()

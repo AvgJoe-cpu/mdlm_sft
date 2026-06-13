@@ -31,7 +31,7 @@ def generate_mdlm(
     tokenizer=None,
     model=None,
     sampler=None,
-    response_length=None,  # fix 2: was referenced as config.response_length
+    response_length=None,
     num_steps=None,
 ):
     messages_list = [[{"role": "user", "content": p}] for p in batch["prompt"]]
@@ -67,16 +67,15 @@ def generate_mdlm(
     decoded = [
         tokenizer.decode(
             out[b, int(prompt_lens[b]) : int(prompt_lens[b]) + response_length],
-            skip_special_tokens=False,  # fix 7: was True, but we want to preserve special tokens for evaluation
+            skip_special_tokens=False,
         )
         for b in range(out.shape[0])
     ]
     return {"completion": decoded}
 
 
-@hydra.main(config_path=None, config_name="config", version_base=None)  # fix 8
-def run_inference(cfg: GenerationConfig) -> None:  # fix 1: was InferenceConfig
-    # fix 3, 5: cfg.pop() → cfg.<field>; positional arg to from_pretrained
+def run_inference_core(cfg: GenerationConfig) -> None:
+    """Pure function — no Hydra. Importable from notebooks/tests/orchestrators."""
     model = AutoModelForMaskedLM.from_pretrained(
         cfg.model_name_or_path, trust_remote_code=True, device_map="auto"
     ).eval()
@@ -92,7 +91,6 @@ def run_inference(cfg: GenerationConfig) -> None:  # fix 1: was InferenceConfig
     )
     sampler.sample_sft = SFTMixinBatchedVarlen.sample_sft.__get__(sampler, type(sampler))
 
-    # fix 4: was cfg.pop("input_dataset_path") and wrong field name
     ds = load_from_disk(cfg.dataset_input_path)
 
     ds = ds.map(
@@ -108,7 +106,6 @@ def run_inference(cfg: GenerationConfig) -> None:  # fix 1: was InferenceConfig
         batch_size=cfg.batch_size,
     )
 
-    # fix 6: was output_dataset_path.mkdir() on a str; wrap in Path
     output_path = Path(cfg.dataset_output_path)
     output_path.mkdir(parents=True, exist_ok=True)
     ds.save_to_disk(output_path)
@@ -119,5 +116,10 @@ def run_inference(cfg: GenerationConfig) -> None:  # fix 1: was InferenceConfig
         torch.cuda.empty_cache()
 
 
-if __name__ == "__main__":  # fix 9: required for python -m
+@hydra.main(config_path=None, config_name="config", version_base=None)
+def run_inference(cfg: GenerationConfig) -> None:
+    run_inference_core(cfg)
+
+
+if __name__ == "__main__":
     run_inference()
