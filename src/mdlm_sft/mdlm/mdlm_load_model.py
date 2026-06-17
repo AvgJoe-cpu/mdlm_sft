@@ -4,6 +4,12 @@ from pathlib import Path
 from huggingface_hub import download_bucket_files
 import torch
 from transformers import AutoModelForMaskedLM, AutoTokenizer
+import gc
+import shutil
+from pathlib import Path
+
+from huggingface_hub import snapshot_download
+
 
 def resize_mdlm_vocab(model, new_vocab: int) -> None:
     backbone = model.backbone
@@ -117,5 +123,88 @@ def download_base_model() -> None:
     model.save_pretrained(str(chat_path))
     tokenizer.save_pretrained(str(chat_path))
 
+
+
+def _download_one(checkpoint: str, local_path: Path, repo_id: str, needed: list[str]) -> Path:
+    """Download a single checkpoint and flatten it into local_path/."""
+    cache_dir = local_path.parent / f".hf_cache_{local_path.name}"
+    snapshot_path = None
+    try:
+        snapshot_path = snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=[f"{checkpoint}/{name}" for name in needed],
+            local_dir=cache_dir,
+        )
+        src_dir = Path(snapshot_path) / checkpoint
+        if not src_dir.is_dir():
+            raise FileNotFoundError(
+                f"expected checkpoint dir not found after download: {src_dir}"
+            )
+        local_path.mkdir(parents=True, exist_ok=True)
+        for f in src_dir.iterdir():
+            shutil.copy2(f, local_path / f.name)
+
+        missing = [n for n in needed if not (local_path / n).exists()]
+        if missing:
+            raise FileNotFoundError(f"missing files in {local_path}: {missing}")
+
+        print(f"[ok] {checkpoint} -> {local_path.resolve()}")
+        return local_path
+
+    except Exception as e:
+        print(f"[err] download {checkpoint} failed: {type(e).__name__}: {e}")
+        raise
+
+    finally:
+        if cache_dir.exists():
+            try:
+                shutil.rmtree(cache_dir, ignore_errors=True)
+            except Exception as cleanup_err:
+                print(f"[warn] cache cleanup failed for {checkpoint}: {cleanup_err}")
+        # Drop locals before the gc pass
+        snapshot_path = None
+        src_dir = None
+        cache_dir = None
+        gc.collect()
+
+
+def download_mdlm_cot_checkpoint() -> dict[str, Path]:
+    """Download all MDLM-CoT splits, each into its own flat local dir.
+
+    All config is held *inside* this function — nothing leaks to module scope.
+    Returns {checkpoint_name: local_path}.
+    """
+    repo_id = "avgJo3/mdlm_cot"
+    needed = [
+        "config.json",
+        "configuration_mdlm.py",
+        "modeling_mdlm.py",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+    ]
+    checkpoints = {
+        "checkpoint-2554-split1": Path("artifacts_weights_mdlm_cot_s1"),
+        "checkpoint-2554-split2": Path("artifacts_weights_mdlm_cot_s2"),
+        "checkpoint-2554-split3": Path("artifacts_weights_mdlm_cot_s3"),
+    }
+
+    try:
+        result = {
+            ckpt: _download_one(ckpt, path, repo_id, needed)
+            for ckpt, path in checkpoints.items()
+        }
+        return result
+    finally:
+        # Drop every local in this frame, then GC.
+        del repo_id, needed, checkpoints
+        try:
+            del result   # may not exist if dict comp raised
+        except NameError:
+            pass
+        gc.collect()
+
 if __name__ == "__main__":
     download_base_model()
+    download_mdlm_cot_checkpoint()

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from datasets import load_dataset, load_from_disk
 from datasets import concatenate_datasets
-from mdlm_sft.mdlm.mdlm_load_model_v2 import download_base_model
+from mdlm_sft.mdlm.mdlm_load_model import download_base_model
 from mdlm_sft.mdlm.evaluate_score_v2 import evaluate
 # ---------------------------------------------------------------------------
 def train_fn(load_model_train_path, save_model_train_path, load_data_train_path, load_data_eval_path, *, round_name, extra_overrides=()):
