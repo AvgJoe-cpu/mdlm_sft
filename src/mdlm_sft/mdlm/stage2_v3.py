@@ -254,6 +254,20 @@ def main() -> None:
                 extra_overrides=gen_overrides,
             )
 
+        del cfg, gen_present, has_gen   # NOT round_name (the for-loop rebinds it)
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                torch.cuda.synchronize()
+            elif torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+                torch.mps.synchronize()
+        except ImportError:
+            pass            
+
     bucket_cfg = experiment["bucket"]
     remote = upload_artifacts_to_bucket(
         experiment,
