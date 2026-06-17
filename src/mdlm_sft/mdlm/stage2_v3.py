@@ -268,6 +268,8 @@ def main() -> None:
                 torch.mps.synchronize()
         except ImportError:
             pass            
+        
+    del round_name, round_names, last_round, train_overrides, gen_overrides
 
     bucket_cfg = experiment["bucket"]
     remote = upload_artifacts_to_bucket(
