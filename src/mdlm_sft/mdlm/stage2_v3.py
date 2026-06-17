@@ -9,6 +9,7 @@ import hashlib
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+import gc
 
 from datasets import load_dataset, load_from_disk
 from datasets import concatenate_datasets
