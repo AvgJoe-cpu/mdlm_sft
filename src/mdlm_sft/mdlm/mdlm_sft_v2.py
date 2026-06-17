@@ -289,7 +289,7 @@ class TrainingConfig:
     gradient_accumulation_steps: int = 1
     num_train_epochs: float = 5.0
     max_steps: int = -1                # overrides num_train_epochs if > 0
-    bf16: bool = False
+    bf16: bool = True
     fp16: bool = False
 
 
