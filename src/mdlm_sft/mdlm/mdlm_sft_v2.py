@@ -289,7 +289,9 @@ class TrainingConfig:
     gradient_accumulation_steps: int = 1
     num_train_epochs: float = 5.0
     max_steps: int = -1                # overrides num_train_epochs if > 0
-    bf16: bool = True
+    bf16: bool = False
+    fp16: bool = False
+
 
     # ── Eval ─────────────────────────────────────────────────────────────────
     per_device_eval_batch_size: int =1
@@ -301,19 +303,20 @@ class TrainingConfig:
     load_best_model_at_end: bool = False
 
     # ── Logging ──────────────────────────────────────────────────────────────
-    logging_steps: int = 25
+    logging_steps: int = 50
     report_to: str = "wandb"
     project: Optional[str] = "CoT-chat"      # only relevant if report_to != "none"
 
     # ── Memory & performance ─────────────────────────────────────────────────
     gradient_checkpointing: bool = False
-    activation_offloading: bool = True
-    torch_compile: bool = False
+    activation_offloading: bool = False
+    torch_compile: bool = True
     use_liger_kernel: bool = False
-    dataloader_num_workers: int = 8
-    dataloader_prefetch_factor: int = 8
+    dataloader_num_workers: int = 16
+    dataloader_prefetch_factor: int = 16
     dataloader_pin_memory: bool = True
     dataloader_persistent_workers: bool = True
+    use_cpu: bool = False
 
 
 cs = ConfigStore.instance()

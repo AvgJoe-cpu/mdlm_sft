@@ -91,72 +91,9 @@ EXPERIMENT = {
                 "load_data_gen_path":    "{DATA}/{SPLIT}",
                 "save_data_gen_path":    "{DATA}/{SPLIT}-gen-r1",
             },
-            "ROUND-2": {
-                "load_model_train_path": "{MOD}",
-                "save_model_train_path": "{MOD}-r2",
-                "load_data_train_path":  "{DATA}/{SPLIT}-gen-r1",
-
-                "load_model_gen_path":   "{MOD}-r2",
-                "load_data_gen_path":    "{DATA}/{SPLIT}",
-                "save_data_gen_path":    "{DATA}/{SPLIT}-gen-r2",
-            },
-            "ROUND-3": {
-                "load_model_train_path": "{MOD}",
-                "save_model_train_path": "{MOD}-r3",
-                "load_data_train_path":  "{DATA}/{SPLIT}-gen-r2",
-            },
        },
-
-        # MAIN ITER 
-        # Round 1-mix starts after the first pass on the original data.
-        # mix must have occured here
-
-        "rounds-mix": {
-            "ROUND-1-mix": {
-                "mix_factor":            1.0,
-                "mix_base_path":         "{DATA}/{SPLIT}",                 
-                "mix_gen_path":          "{DATA}/{SPLIT}-gen-r0",          
-                "mix_output_path":       "{MIX}/{SPLIT}-mix-r0",           
-
-                # TRAIN
-                "load_model_train_path": "{MOD}",                        
-                "save_model_train_path": "{MOD}-r1-mix",
-                "load_data_train_path":  "{MIX}/{SPLIT}-mix-r0",           
-
-                # GEN   
-                "load_model_gen_path":   "{MOD}-r1-mix",
-                "load_data_gen_path":    "{DATA}/{SPLIT}",
-                "save_data_gen_path":    "{DATA}/{SPLIT}-gen-r1-mix",
-            },      
-            "ROUND-2-mix": {
-                "mix_factor":            1.0,
-                "mix_base_path":         "{DATA}/{SPLIT}",                 
-                "mix_gen_path":          "{DATA}/{SPLIT}-gen-r1-mix",          
-                "mix_output_path":       "{MIX}/{SPLIT}-mix-r1",           
-
-                # TRAIN
-                "load_model_train_path": "{MOD}",                        
-                "save_model_train_path": "{MOD}-r2-mix",
-                "load_data_train_path":  "{MIX}/{SPLIT}-mix-r1",           
-
-                # GEN   
-                "load_model_gen_path":   "{MOD}-r2-mix",
-                "load_data_gen_path":    "{DATA}/{SPLIT}",
-                "save_data_gen_path":    "{DATA}/{SPLIT}-gen-r2-mix",
-            },      
-            "ROUND-3-mix": {
-                "mix_factor":            1.0,
-                "mix_base_path":         "{DATA}/{SPLIT}",                 
-                "mix_gen_path":          "{DATA}/{SPLIT}-gen-r2-mix",          
-                "mix_output_path":       "{MIX}/{SPLIT}-mix-r2",           
-                
-                # TRAIN
-                "load_model_train_path": "{MOD}",                        
-                "save_model_train_path": "{MOD}-r3-mix",
-                "load_data_train_path":  "{MIX}/{SPLIT}-mix-r2",           
-            },      
-
-       },
+  
+       
     },        
 }    
 
@@ -183,8 +120,38 @@ def mix_ds(train_ds_path: str, gen_ds_path: str, output_ds_path: str, fact: floa
     out_ds.save_to_disk(output_ds_path)
 
 
+########################
+# POST-PROCESSING STEPS
+
+def hmerge_gen_datasets(gen_paths: dict[str, str], output_path: str, *, id_col: str = "id") -> None:
+    """Horizontally concat generated datasets aligned on `id_col`. Renames `completion` -> `completion-<suffix>`."""
+    if not gen_paths:
+        raise ValueError("gen_paths is empty.")
+
+    aligned, ref_ids, ref_name = [], None, None
+    for suffix, path in gen_paths.items():
+        ds = load_from_disk(path).sort(id_col).remove_columns(["prompt", "prompt_token_count", "completion_token_count", "text_token_count"])
+        ids = ds[id_col]
+
+        if ref_ids is None:
+            ref_ids, ref_name = ids, suffix
+        elif ids != ref_ids:
+            raise ValueError(f"{suffix}: '{id_col}' does not align with {ref_name}.")
+
+        ds = ds.rename_column("completion", f"completion-{suffix}")
+        if aligned:
+            ds = ds.remove_columns([id_col])
+        aligned.append(ds)
+
+    merged = concatenate_datasets(aligned, axis=1)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    merged.save_to_disk(output_path)
+
+
 
 def main() -> None:
+    # os.environ["WANDB_PROJECT"] = "mdlm-sft"
+
     refs = EXPERIMENT.pop("_refs")
     experiment = resolve_refs(EXPERIMENT, refs)
 
@@ -202,8 +169,11 @@ def main() -> None:
     rounds      = id_ft["rounds"]
     round_names = list(rounds)                      # preserves insertion order
     last_round  = round_names[-1]
+
     for round_name in round_names:
         cfg = rounds[round_name]
+
+        # Detect gen presence: all-or-nothing on the three gen path keys.
         gen_present = [k for k in GEN_KEYS if k in cfg]
         if gen_present and len(gen_present) != len(GEN_KEYS):
             missing = set(GEN_KEYS) - set(gen_present)
@@ -212,6 +182,9 @@ def main() -> None:
                 f"Provide all of {GEN_KEYS} or none."
             )
         has_gen = bool(gen_present)
+
+        # Safeguard: a gen-less round is only legal as the last round, because
+        # subsequent rounds chain off this round's gen output.
         if not has_gen and round_name != last_round:
             raise ValueError(
                 f"{round_name}: skipping gen is only allowed for the final round "
@@ -236,31 +209,28 @@ def main() -> None:
                 extra_overrides=gen_overrides,
             )
 
+    ##### ID EVAL HERE 
+#   # LOAD BASE MODEL - SCORE_EVAL ON ALL GEN-DS
+# 
+# 
+    ##### POST-PROCESSING
+    # POST - STATS 
+    # 1. gen datasets: compute stats for each gen dataset, save to disk.
+    # 2. load stats - concat into a single table, save to disk.
 
-    #
-    for round_name, round_cfg in id_ft["rounds-mix"].items():
-        print(f"\n[{round_name}] === MIX ROUND START ===")
-        mix_ds(
-            train_ds_path=round_cfg["mix_base_path"],
-            gen_ds_path=round_cfg["mix_gen_path"],
-            output_ds_path=round_cfg["mix_output_path"],
-            fact=round_cfg.get("mix_factor", 1.0),
-        )
 
-        # Sanity: verify the trainer's input == the mix's output.
-        train_path = round_cfg["load_data_train_path"]
-        mix_out    = round_cfg["mix_output_path"]
-        print(f"[{round_name}] trainer will load: {train_path}")
-        print(f"[{round_name}] mix wrote to:     {mix_out}")
-        assert train_path == mix_out, (
-            f"{round_name}: load_data_train_path ({train_path}) "
-            f"does not match mix_output_path ({mix_out}); "
-            f"trainer would not see mixed data."
-        )
+    # POST - DATASETS: horizontal merge of all gen datasets from all rounds, aligned on `id`.
+    rounds = resolve_refs(EXPERIMENT["id_finetune"]["rounds"], refs)
+    gen_paths = {
+        Path(cfg["save_data_gen_path"]).name: cfg["save_data_gen_path"]
+        for cfg in rounds.values()
+        if "save_data_gen_path" in cfg and Path(cfg["save_data_gen_path"]).exists()
+    }
+    hmerge_gen_datasets(gen_paths, f"{refs['DATA']}/{refs['SPLIT']}-gen-hmerged")
+    ds = load_from_disk(f"{refs['DATA']}/{refs['SPLIT']}-gen-hmerged")
+    print(ds)            
 
-        # Sanity: verify the file exists and matches the size we just wrote.
-        loaded = load_from_disk(train_path)
-        print(f"[{round_name}] trainer-side |dataset| = {len(loaded)}")
+    # 2DO: POST-MODELS
 
 if __name__ == "__main__":    
     main()
