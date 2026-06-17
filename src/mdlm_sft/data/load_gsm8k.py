@@ -3,6 +3,7 @@ import gc
 from datasets import DatasetDict, load_dataset
 from .utils import normalize_whitespace, add_hash_id, count_tokens_fn
 
+from pathlib import Path
 
 def render_thought_process(batch):
     return {
@@ -28,7 +29,7 @@ def load_and_process_gsm8k(BATCH_SIZE: int = 1000, OUTPUT_DIR=None) -> DatasetDi
             .map(add_hash_id,          fn_kwargs={"field_names": ("prompt", "completion")}, with_indices=True,          batched=True, batch_size=BATCH_SIZE, desc="[main] Adding hash ID")
             .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "prompt"},                      batched=True, batch_size=BATCH_SIZE, desc="[main] Counting tokens in prompt")
             .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "completion"},                  batched=True, batch_size=BATCH_SIZE, desc="[main] Counting tokens in completion")
-            .map(lambda x: {"text_token_count": [p + c for p, c in zip(x["prompt_token_count"], x["completion_token_count"])]}, batched=False, desc="[main] Calculating total token count")
+            .map(lambda x: {"text_token_count": [p + c for p, c in zip(x["prompt_token_count"], x["completion_token_count"])]}, batched=True, desc="[main] Calculating total token count")
         )
 
         dd_soc = load_dataset("openai/gsm8k", "socratic")
@@ -40,7 +41,7 @@ def load_and_process_gsm8k(BATCH_SIZE: int = 1000, OUTPUT_DIR=None) -> DatasetDi
             .map(add_hash_id,          fn_kwargs={"field_names": ("prompt", "completion")}, with_indices=True,          batched=True, batch_size=BATCH_SIZE, desc="[socratic] Adding hash ID")
             .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "prompt"},                      batched=True, batch_size=BATCH_SIZE, desc="[socratic] Counting tokens in prompt")
             .map(count_tokens_fn,      fn_kwargs={"tokenizer": tokenizer, "field_name": "completion"},                  batched=True, batch_size=BATCH_SIZE, desc="[socratic] Counting tokens in completion")
-            .map(lambda x: {"text_token_count": [p + c for p, c in zip(x["prompt_token_count"], x["completion_token_count"])]}, batched=False,desc="[socratic] Calculating total token count")
+            .map(lambda x: {"text_token_count": [p + c for p, c in zip(x["prompt_token_count"], x["completion_token_count"])]}, batched=True,desc="[socratic] Calculating total token count")
         )
         del tokenizer
         gc.collect()
@@ -62,4 +63,5 @@ def load_and_process_gsm8k(BATCH_SIZE: int = 1000, OUTPUT_DIR=None) -> DatasetDi
     finally:
         gc.collect()
 
-load_and_process_gsm8k()        
+if __name__ == "__main__":        
+    load_and_process_gsm8k(OUTPUT_DIR=Path("datasets_gsm8k"))        

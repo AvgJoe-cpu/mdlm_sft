@@ -82,6 +82,9 @@ def run_inference_core(cfg: GenerationConfig) -> None:
     tokenizer = AutoTokenizer.from_pretrained(
         cfg.model_name_or_path, trust_remote_code=True
     )
+    if torch.cuda.is_available():
+        model = torch.compile(model, mode="max-autotune")
+        print("Model compiled with torch.compile")
 
     scheduler = LinearAlphaScheduler()
     sampler = MinimalMDLMSampler(

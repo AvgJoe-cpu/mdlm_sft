@@ -2,11 +2,21 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+import os
+import sys
+import shutil
+import hashlib
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
 
 from datasets import load_dataset, load_from_disk
 from datasets import concatenate_datasets
 from mdlm_sft.mdlm.mdlm_load_model_v2 import download_base_model
 from mdlm_sft.mdlm.evaluate_score_v2 import evaluate
+
+from huggingface_hub import create_bucket, sync_bucket, list_bucket_tree
+
 # ---------------------------------------------------------------------------
 def train_fn(load_model_train_path, save_model_train_path, load_data_train_path, load_data_eval_path, *, round_name, extra_overrides=()):
     cmd = [
@@ -16,7 +26,7 @@ def train_fn(load_model_train_path, save_model_train_path, load_data_train_path,
         f"train_ds_path={load_data_train_path}",
         f"eval_ds_path={load_data_eval_path}",
         f"run_name=mdlm-sft-{round_name}",
-        f"hydra.run.dir=runs/{round_name}/train",
+        f"hydra.run.dir=exp/{round_name}/train",
         *extra_overrides,
     ]
     print(f"[{round_name}] train: {' '.join(cmd)}")
@@ -29,7 +39,7 @@ def gen_fn(load_model_gen_path, load_data_gen_path, save_data_gen_path, *, round
         f"model_name_or_path={load_model_gen_path}",
         f"dataset_input_path={load_data_gen_path}",
         f"dataset_output_path={save_data_gen_path}",
-        f"hydra.run.dir=runs/{round_name}/gen",
+        f"hydra.run.dir=exp/{round_name}/gen",
         *extra_overrides,
     ]
     print(f"[{round_name}] gen: {' '.join(cmd)}")
@@ -46,9 +56,15 @@ EXPERIMENT = {
         "SPLIT": "strat_train_12pct",
     },
     "dataset_hub_id": "avgJo3/writingprompts-strat",
-    "load_data_eval_path": "{DATA}/strat_eval",  
-    
-    # ** STAGE 1 ** 
+    "load_data_eval_path": "{DATA}/strat_eval",
+
+    "bucket": {
+        "namespace": "avgJo3",                 
+        "name":      "mdlm-sft-artifacts",     
+        "private":   True,
+    },
+
+    # ** STAGE 1 **
     "id_finetune": {
         "train_overrides": {
             "max_steps":                    4,
@@ -59,20 +75,20 @@ EXPERIMENT = {
             "gradient_accumulation_steps":  1,
             "torch_compile":                False,
             "activation_offloading":        False,
-            "bf16":                         True,    
+            "bf16":                         True,
             "fp16":                         False,
             "report_to":                    "none",
-            "eval_strategy": "no",             
+            "eval_strategy": "no",
             "eval_on_start": False,
         },
         "gen_overrides": {
             "batch_size":      2,
-            "response_length": 1,
-            "num_steps":       1,
+            "response_length": 128,
+            "num_steps":       28,
         },
 
-        # MAIN ITER 
-        "rounds": {                     
+        # MAIN ITER
+        "rounds": {
             "ROUND-0": {
                 "load_model_train_path": "{MOD}",
                 "save_model_train_path": "{MOD}-r0",
@@ -104,61 +120,12 @@ EXPERIMENT = {
                 "load_model_train_path": "{MOD}",
                 "save_model_train_path": "{MOD}-r3",
                 "load_data_train_path":  "{DATA}/{SPLIT}-gen-r2",
-            },
-       },
 
-        # MAIN ITER 
-        # Round 1-mix starts after the first pass on the original data.
-        # mix must have occured here
+                # No gen for final round — just evaluating the final trained model.
+        },
+    },
+}
 
-        "rounds-mix": {
-            "ROUND-1-mix": {
-                "mix_factor":            1.0,
-                "mix_base_path":         "{DATA}/{SPLIT}",                 
-                "mix_gen_path":          "{DATA}/{SPLIT}-gen-r0",          
-                "mix_output_path":       "{MIX}/{SPLIT}-mix-r0",           
-
-                # TRAIN
-                "load_model_train_path": "{MOD}",                        
-                "save_model_train_path": "{MOD}-r1-mix",
-                "load_data_train_path":  "{MIX}/{SPLIT}-mix-r0",           
-
-                # GEN   
-                "load_model_gen_path":   "{MOD}-r1-mix",
-                "load_data_gen_path":    "{DATA}/{SPLIT}",
-                "save_data_gen_path":    "{DATA}/{SPLIT}-gen-r1-mix",
-            },      
-            "ROUND-2-mix": {
-                "mix_factor":            1.0,
-                "mix_base_path":         "{DATA}/{SPLIT}",                 
-                "mix_gen_path":          "{DATA}/{SPLIT}-gen-r1-mix",          
-                "mix_output_path":       "{MIX}/{SPLIT}-mix-r1",           
-
-                # TRAIN
-                "load_model_train_path": "{MOD}",                        
-                "save_model_train_path": "{MOD}-r2-mix",
-                "load_data_train_path":  "{MIX}/{SPLIT}-mix-r1",           
-
-                # GEN   
-                "load_model_gen_path":   "{MOD}-r2-mix",
-                "load_data_gen_path":    "{DATA}/{SPLIT}",
-                "save_data_gen_path":    "{DATA}/{SPLIT}-gen-r2-mix",
-            },      
-            "ROUND-3-mix": {
-                "mix_factor":            1.0,
-                "mix_base_path":         "{DATA}/{SPLIT}",                 
-                "mix_gen_path":          "{DATA}/{SPLIT}-gen-r2-mix",          
-                "mix_output_path":       "{MIX}/{SPLIT}-mix-r2",           
-                
-                # TRAIN
-                "load_model_train_path": "{MOD}",                        
-                "save_model_train_path": "{MOD}-r3-mix",
-                "load_data_train_path":  "{MIX}/{SPLIT}-mix-r2",           
-            },      
-
-       },
-    },        
-}    
 
 def resolve_refs(obj, refs):
     if isinstance(obj, str):  return obj.format_map(refs)
@@ -166,22 +133,65 @@ def resolve_refs(obj, refs):
     return obj
 
 
-def mix_ds(train_ds_path: str, gen_ds_path: str, output_ds_path: str, fact: float = 1.0) -> None:
-    if not 0.0 <= fact <= 1.0:
-        raise ValueError(f"mix_factor must be in [0, 1], got {fact}")
+def _unique_run_id() -> str:
+    """SHA-256 over (date, datetime-with-microseconds) -> short hex prefix."""
+    now = datetime.now(timezone.utc)
+    payload = f"{now.date().isoformat()}|{now.isoformat(timespec='microseconds')}"
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return f"{now.strftime('%Y%m%dT%H%M%S')}-{digest[:16]}"
 
-    base_ds = load_from_disk(train_ds_path)
-    gen_ds  = load_from_disk(gen_ds_path)
 
-    n_gen = int(len(gen_ds) * fact)
-    if n_gen > 0:
-        gen_ds = gen_ds.shuffle(seed=42).select(range(n_gen))
-        out_ds = concatenate_datasets([base_ds, gen_ds]).shuffle(seed=42)
-    else:
-        out_ds = base_ds  # fact=0 → pure gold, no-op concat
+def _stage_artifacts(experiment: dict, staging_dir: Path) -> None:
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    rounds = experiment["id_finetune"]["rounds"]
+    GEN_KEY = "save_data_gen_path"
 
-    out_ds.save_to_disk(output_ds_path)
+    manifest_lines = []
+    for round_name, cfg in rounds.items():
+        round_dir = staging_dir / round_name
+        round_dir.mkdir(parents=True, exist_ok=True)
 
+        # Model checkpoint
+        model_src = Path(cfg["save_model_train_path"])
+        if model_src.exists():
+            model_dst = round_dir / "model"
+            shutil.copytree(model_src, model_dst, dirs_exist_ok=True)
+            manifest_lines.append(f"{round_name}/model <- {model_src}")
+        else:
+            manifest_lines.append(f"{round_name}/model MISSING ({model_src})")
+
+        # Generated dataset (optional — last round may skip gen)
+        if GEN_KEY in cfg:
+            data_src = Path(cfg[GEN_KEY])
+            if data_src.exists():
+                data_dst = round_dir / "data"
+                shutil.copytree(data_src, data_dst, dirs_exist_ok=True)
+                manifest_lines.append(f"{round_name}/data  <- {data_src}")
+            else:
+                manifest_lines.append(f"{round_name}/data  MISSING ({data_src})")
+
+    (staging_dir / "manifest.txt").write_text("\n".join(manifest_lines) + "\n")
+
+
+def upload_artifacts_to_bucket(experiment: dict, *, bucket_namespace: str, bucket_name: str, private: bool = True) -> str:
+    run_id = _unique_run_id()
+    staging_root = Path("uploads")
+    staging_dir = staging_root / run_id
+
+    print(f"[upload] staging artifacts to {staging_dir}")
+    _stage_artifacts(experiment, staging_dir)
+
+    create_bucket(bucket_name, private=private, exist_ok=True)
+    remote = f"hf://buckets/{bucket_namespace}/{bucket_name}/{run_id}"
+    print(f"[upload] syncing {staging_dir} -> {remote}")
+    sync_bucket(str(staging_dir), remote)
+
+    # Quick sanity listing.
+    print(f"[upload] contents of {remote}:")
+    for item in list_bucket_tree(f"{bucket_namespace}/{bucket_name}", prefix=run_id, recursive=True):
+        print(f"  {item.path}  ({item.size} bytes)")
+
+    return remote
 
 
 def main() -> None:
@@ -204,6 +214,7 @@ def main() -> None:
     last_round  = round_names[-1]
     for round_name in round_names:
         cfg = rounds[round_name]
+
         gen_present = [k for k in GEN_KEYS if k in cfg]
         if gen_present and len(gen_present) != len(GEN_KEYS):
             missing = set(GEN_KEYS) - set(gen_present)
@@ -226,7 +237,6 @@ def main() -> None:
             round_name=round_name,
             extra_overrides=train_overrides,
         )
-
         if has_gen:
             gen_fn(
                 load_model_gen_path=cfg["load_model_gen_path"],
@@ -236,31 +246,15 @@ def main() -> None:
                 extra_overrides=gen_overrides,
             )
 
+    bucket_cfg = experiment["bucket"]
+    remote = upload_artifacts_to_bucket(
+        experiment,
+        bucket_namespace=bucket_cfg["namespace"],
+        bucket_name=bucket_cfg["name"],
+        private=bucket_cfg.get("private", True),
+    )
+    print(f"[done] artifacts uploaded to {remote}")
 
-    #
-    for round_name, round_cfg in id_ft["rounds-mix"].items():
-        print(f"\n[{round_name}] === MIX ROUND START ===")
-        mix_ds(
-            train_ds_path=round_cfg["mix_base_path"],
-            gen_ds_path=round_cfg["mix_gen_path"],
-            output_ds_path=round_cfg["mix_output_path"],
-            fact=round_cfg.get("mix_factor", 1.0),
-        )
-
-        # Sanity: verify the trainer's input == the mix's output.
-        train_path = round_cfg["load_data_train_path"]
-        mix_out    = round_cfg["mix_output_path"]
-        print(f"[{round_name}] trainer will load: {train_path}")
-        print(f"[{round_name}] mix wrote to:     {mix_out}")
-        assert train_path == mix_out, (
-            f"{round_name}: load_data_train_path ({train_path}) "
-            f"does not match mix_output_path ({mix_out}); "
-            f"trainer would not see mixed data."
-        )
-
-        # Sanity: verify the file exists and matches the size we just wrote.
-        loaded = load_from_disk(train_path)
-        print(f"[{round_name}] trainer-side |dataset| = {len(loaded)}")
 
 if __name__ == "__main__":    
     main()

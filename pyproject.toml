@@ -17,6 +17,7 @@ dependencies = [
     "wandb",
     "huggingface_hub",
     "liger-kernel; sys_platform == 'linux'",
+    "accelerate",
 ]
 [project.optional-dependencies]
 dev = [
