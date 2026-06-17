@@ -69,7 +69,7 @@ EXPERIMENT = {
         "train_overrides": {
             "per_device_train_batch_size":  64,
             "per_device_eval_batch_size":   64,
-            "gradient_accumulation_steps":  10,
+            "gradient_accumulation_steps":  5,
             "eval_steps":                   100,
             "activation_offloading":        False,
             "lr_scheduler_type":            "cosine",
