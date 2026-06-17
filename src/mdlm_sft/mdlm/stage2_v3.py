@@ -12,7 +12,7 @@ from pathlib import Path
 
 from datasets import load_dataset, load_from_disk
 from datasets import concatenate_datasets
-from mdlm_sft.mdlm.mdlm_load_model_v2 import download_base_model
+from mdlm_sft.mdlm.mdlm_load_model import download_base_model, download_mdlm_cot_checkpoint
 from mdlm_sft.mdlm.evaluate_score_v2 import evaluate
 
 from huggingface_hub import create_bucket, sync_bucket, list_bucket_tree
@@ -49,12 +49,13 @@ def gen_fn(load_model_gen_path, load_data_gen_path, save_data_gen_path, *, round
 
 EXPERIMENT = {
     "_refs": {
-        "MOD":   "artifacts_weights_mdlm_base_mdlm-owt_chat",
+        "MOD":   "artifacts_weights_mdlm_cot_s3",
         "DATA":  "datasets_writingprompts-strat",
         "MIX":   "datasets_writingprompts-strat-mix",
         "STATS": "datasets_writingprompts-strat/stats",
         "SPLIT": "strat_train_12pct",
     },
+    "reasoning_model": True,  # whether to use the reasoning-capable model variant (chat template + cot pretraining)
     "dataset_hub_id": "avgJo3/writingprompts-strat",
     "load_data_eval_path": "{DATA}/strat_eval",
 
@@ -86,7 +87,7 @@ EXPERIMENT = {
             "report_to":                   "wandb",
         },
         "gen_overrides": {
-            "batch_size":      32,
+            "batch_size":      64,
             "response_length": 128,
             "num_steps":       128,
         },
@@ -201,8 +202,12 @@ def upload_artifacts_to_bucket(experiment: dict, *, bucket_namespace: str, bucke
 def main() -> None:
     refs = EXPERIMENT.pop("_refs")
     experiment = resolve_refs(EXPERIMENT, refs)
-
-    download_base_model()
+    
+    if experiment["reasoning_model"]:
+        download_mdlm_cot_checkpoint()
+    else:     
+        download_base_model()
+    
     dataset_dir = Path(refs["DATA"])
     if not dataset_dir.exists():
         load_dataset(experiment["dataset_hub_id"]).save_to_disk(str(dataset_dir))

@@ -13,8 +13,7 @@ from pathlib import Path
 
 from datasets import load_dataset, load_from_disk
 from datasets import concatenate_datasets
-from mdlm_sft.mdlm.load_model_v3 import download_mdlm_cot_checkpoint
-from mdlm_sft.mdlm.mdlm_load_model_v2 import download_base_model
+from mdlm_sft.mdlm.mdlm_load_model import download_base_model, download_mdlm_cot_checkpoint
 from mdlm_sft.mdlm.evaluate_score_v2 import evaluate
 
 from huggingface_hub import create_bucket, sync_bucket, list_bucket_tree
