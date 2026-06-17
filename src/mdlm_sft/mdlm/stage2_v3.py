@@ -125,7 +125,7 @@ EXPERIMENT = {
                 "save_model_train_path": "{MOD}-r3",
                 "load_data_train_path":  "{DATA}/{SPLIT}-gen-r2",
 
-                # No gen for final round — just evaluating the final trained model.
+            },
         },
     },
 }
