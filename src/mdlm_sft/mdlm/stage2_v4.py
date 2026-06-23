@@ -50,7 +50,7 @@ EXPERIMENT = {
         "STATS": "datasets_writingprompts-strat/stats",
         "SPLIT": "strat_train_25pct",
     },
-    "reasoning_model": True,  # whether to use the reasoning-capable model variant (chat template + cot pretraining)
+    "reasoning_model": False,  # whether to use the reasoning-capable model variant (chat template + cot pretraining)
     "dataset_hub_id": "avgJo3/writingprompts-strat",
     "load_data_eval_path": "{DATA}/strat_eval",
 
