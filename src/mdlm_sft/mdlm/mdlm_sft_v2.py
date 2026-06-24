@@ -15,7 +15,8 @@ from transformers import AutoTokenizer, AutoModelForMaskedLM, DataCollator, PreT
 from trl import SFTConfig, SFTTrainer, trainer
 
 from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
-
+import datasets
+datasets.config.IN_MEMORY_MAX_SIZE = 32 * 1024 ** 3  # 32GB
 
 class CustomForwardSFTTrainer(SFTTrainer):
     """
