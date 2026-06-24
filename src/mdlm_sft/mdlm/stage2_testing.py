@@ -45,13 +45,12 @@ def gen_fn(load_model_gen_path, load_data_gen_path, save_data_gen_path, *, round
 EXPERIMENT = {
     "_refs": {
         "MOD":   "artifacts_weights_mdlm_base_mdlm-owt_chat",
-        "DATA":  "datasets_writingprompts-strat",
-        "MIX":   "datasets_writingprompts-strat-mix",
-        "STATS": "datasets_writingprompts-strat/stats",
+        "DATA":  "datasets_dailydialog-strat",
+        "MIX":   "datasets_dailydialog-strat-mix",
         "SPLIT": "strat_train_12pct",
     },
     "reasoning_model": False,  # whether to use the reasoning-capable model variant (chat template + cot pretraining)
-    "dataset_hub_id": "avgJo3/writingprompts-strat",
+    "dataset_hub_id": "avgJo3/dailydialog-strat",
     "load_data_eval_path": "{DATA}/strat_eval",
 
     "bucket": {
