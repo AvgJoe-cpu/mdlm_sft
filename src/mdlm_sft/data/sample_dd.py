@@ -61,7 +61,7 @@ def render_fn(batch):
     return {"prompt": rendered_prompts, "completion": rendered_compls}
 
 
-def load_and_process_dailydialog(BATCH_SIZE: int = 8000, N_BINS: int = 2, OUTPUT_DIR=None) -> DatasetDict:
+def load_and_process_dailydialog(BATCH_SIZE: int = 8000, N_BINS: int = 4, OUTPUT_DIR=None) -> DatasetDict:
     try:
         dd = load_dataset("avgJo3/dailydialog-datasets-4.8.5")
 

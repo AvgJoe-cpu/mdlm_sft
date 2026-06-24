@@ -11,6 +11,8 @@ from datasets import concatenate_datasets, load_dataset, load_from_disk
 from huggingface_hub import create_bucket, list_bucket_tree, sync_bucket
 
 from mdlm_sft.mdlm.mdlm_load_model import download_base_model, download_mdlm_cot_checkpoint
+import datasets
+datasets.config.IN_MEMORY_MAX_SIZE = 32 * 1024 ** 3  # 32GB
 
 # ---------------------------------------------------------------------------
 def train_fn(load_model_train_path, save_model_train_path, load_data_train_path, load_data_eval_path, *, round_name, extra_overrides=()):

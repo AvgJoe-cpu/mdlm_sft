@@ -11,6 +11,9 @@ from omegaconf import MISSING
 from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
 from .mdlm_helpers.mdlm_sampler_sft import MinimalMDLMSampler, SFTMixinBatchedVarlen
 
+import datasets
+datasets.config.IN_MEMORY_MAX_SIZE = 32 * 1024 ** 3  # 32GB
+
 
 @dataclass
 class GenerationConfig:
