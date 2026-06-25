@@ -1,4 +1,5 @@
 from __future__ import annotations
+from transformers import HfArgumentParser
 
 import dataclasses
 import gc
@@ -6,6 +7,7 @@ import logging
 import math
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -16,7 +18,7 @@ from trl import SFTConfig, SFTTrainer
 
 from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
 
-# datasets.config.IN_MEMORY_MAX_SIZE = 32 * 1024 ** 3  # 32GB
+datasets.config.IN_MEMORY_MAX_SIZE = 32 * 1024 ** 3  # 32GB
 log = logging.getLogger(__name__)
 
 
@@ -261,81 +263,105 @@ class CustomForwardSFTTrainer(SFTTrainer):
         self._metric_sums[mode] = self._zero_sums()
 
 
-def format_to_messages(example):
+
+
+def format_to_messages(batch):
+    prompts = batch["prompt"]
+    completions = batch["completion"]
+    return {"messages": [[{"role": "user", "content": p}, {"role": "assistant", "content": c}] for p, c in zip(prompts, completions)]}
+
+
+def _sft_map_fn(batch, tokenizer=None, max_length=None):
+    enc = tokenizer.apply_chat_template(
+        batch["messages"],
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=True,
+        return_assistant_tokens_mask=True,
+        max_length=max_length,
+        truncation=True,
+    )
+    input_ids       = enc["input_ids"]
+    assistant_masks = enc["assistant_masks"]
+    attention_mask  = enc["attention_mask"]
+
+    # Vectorized -100 masking per example (lengths differ, so do it per row with numpy)
+    labels = [
+        np.where(np.asarray(m, dtype=bool), np.asarray(t), -100).tolist()
+        for t, m in zip(input_ids, assistant_masks)
+    ]
     return {
-        "messages": [
-            {"role": "user", "content": example["prompt"]},
-            {"role": "assistant", "content": example["completion"]},
-        ]
+        "input_ids":       input_ids,
+        "labels":          labels,
+        "assistant_masks": assistant_masks,
+        "attention_mask":  attention_mask,
     }
 
+def run_training(cfg: MDLMSFTConfig, save_last: bool= True) -> None:
 
-
-def run_training(cfg: MDLMSFTConfig, train_ds=None, eval_ds=None) -> None:
-
-    def _sft_map_fn(example, tokenizer=None, max_length=None):
-        enc = tokenizer.apply_chat_template(
-            example["messages"], tokenize=True, add_generation_prompt=False,
-            return_dict=True, return_assistant_tokens_mask=True,
-            max_length=max_length, truncation=True,
-        )
-        input_ids      = enc["input_ids"]
-        assistant_mask = enc["assistant_masks"]
-        attention_mask = enc["attention_mask"]
-        labels = [tok if m == 1 else -100 for tok, m in zip(input_ids, assistant_mask)]
-        return {"input_ids": input_ids, "labels": labels,
-                "assistant_masks": assistant_mask, "attention_mask": attention_mask}
-
-    # Pop ONLY the non-SFTConfig plumbing — custom MDLM fields stay in.
-    model_name_or_path     = cfg.model_name_or_path
-    train_ds_path          = cfg.train_ds_path
-    eval_ds_path           = cfg.eval_ds_path
     resume_from_checkpoint = cfg.resume_from_checkpoint
     max_length             = cfg.max_length
 
-    log.info("Loading tokenizer + model: %s", model_name_or_path)
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
-    model     = AutoModelForMaskedLM.from_pretrained(model_name_or_path, trust_remote_code=True, device_map="auto")
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model_name_or_path, trust_remote_code=True, device_map="auto")
 
-    train_src = train_ds if train_ds is not None else train_ds_path
-    eval_src  = eval_ds  if eval_ds  is not None else eval_ds_path
+    train_ds = load_from_disk(path=cfg.train_ds_path, keep_in_memory=True)
+    train_dataset = (
+        train_ds
+        .map(format_to_messages, batched=True, num_proc=4)
+        .map(_sft_map_fn, batched=True, batch_size=8000, num_proc=4,
+             fn_kwargs={"tokenizer": tokenizer, "max_length": max_length})
+    ).remove_columns(["prompt", "completion", "messages"])
+    del train_ds
 
-    if not all(isinstance(x, (str, Dataset)) for x in (train_src, eval_src)):
-        raise TypeError(f"Expected str or Dataset, got {type(train_src).__name__!r} / {type(eval_src).__name__!r}")
-    if type(train_src) is not type(eval_src):
-        raise TypeError(f"Types must match: {type(train_src).__name__!r} vs {type(eval_src).__name__!r}")
+    eval_ds = load_from_disk(path=cfg.eval_ds_path, keep_in_memory=True)
+    eval_dataset = (
+        eval_ds
+        .map(format_to_messages, batched=True, num_proc=4)
+        .map(_sft_map_fn, batched=True, batch_size=8000, num_proc=4,
+             fn_kwargs={"tokenizer": tokenizer, "max_length": max_length})
+    ).remove_columns(["prompt", "completion", "messages"])
+    del eval_ds
+    gc.collect()
 
-    log.info("Loading datasets — train=%s  eval=%s", train_src, eval_src)
-    _load = lambda x: (load_from_disk(x, keep_in_memory=True) if isinstance(x, str) else x)
-    train_dataset = _load(train_src).map(format_to_messages).map(_sft_map_fn, fn_kwargs={"tokenizer": tokenizer, "max_length": max_length})
-    eval_dataset  = _load(eval_src).map(format_to_messages).map(_sft_map_fn,  fn_kwargs={"tokenizer": tokenizer, "max_length": max_length})
-    log.info("Train dataset size: %d  |  Eval dataset size: %d", len(train_dataset), len(eval_dataset))
-
-    trainer = CustomForwardSFTTrainer(
-        args=cfg,                               # ← cfg IS the args object
-        alpha_scheduler=LinearAlphaScheduler(),
-        model=model,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        processing_class=tokenizer,
-    )
+    model   = AutoModelForMaskedLM.from_pretrained(cfg.model_name_or_path, trust_remote_code=True, device_map="auto")
+    trainer = CustomForwardSFTTrainer(args=cfg, alpha_scheduler=LinearAlphaScheduler(), model=model, train_dataset=train_dataset, eval_dataset=eval_dataset, processing_class=tokenizer)
 
     try:
-        log.info("Starting training (resume_from_checkpoint=%s)", resume_from_checkpoint)
         trainer.train(resume_from_checkpoint=resume_from_checkpoint)
-        trainer.save_model(cfg.output_dir)
-        log.info("Training finished; saved final model to %s", cfg.output_dir)
+        log.info("Training finished")
+        if save_last: trainer.save_model(cfg.output_dir)
     finally:
-        del trainer, model, tokenizer, train_dataset, eval_dataset, resume_from_checkpoint
+        try:
+            for attr in ("optimizer", "lr_scheduler", "model_wrapped", "model", "train_dataset", "eval_dataset", "callback_handler"):
+                if hasattr(trainer, attr): setattr(trainer, attr, None)
+        except Exception: pass
+        try:
+            import wandb         # End any active W&B run so the next sweep trial starts clean
+            if wandb.run is not None: wandb.finish()
+        except Exception: pass
+
+        del trainer, model, tokenizer, train_dataset, eval_dataset
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
 
-
-from transformers import HfArgumentParser
 
 if __name__ == "__main__":
     parser = HfArgumentParser(MDLMSFTConfig)
     (cfg,) = parser.parse_args_into_dataclasses()
     log.info("Training config:\n%s", cfg.to_json_string())
-    run_training(cfg)
+
+    try:
+        run_training(cfg)
+    finally:
+        for h in list(log.handlers):
+            if isinstance(h, logging.FileHandler):
+                h.close()
+                log.removeHandler(h)
+        except Exception: pass
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
