@@ -304,7 +304,7 @@ def run_training(cfg: MDLMSFTConfig, save_last: bool= True) -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name_or_path, trust_remote_code=True, device_map="auto")
 
-    train_ds = load_from_disk(path=cfg.train_ds_path, keep_in_memory=True)
+    train_ds = load_from_disk(cfg.train_ds_path, keep_in_memory=True)
     train_dataset = (
         train_ds
         .map(format_to_messages, batched=True, num_proc=4)
@@ -313,7 +313,7 @@ def run_training(cfg: MDLMSFTConfig, save_last: bool= True) -> None:
     ).remove_columns(["prompt", "completion", "messages"])
     del train_ds
 
-    eval_ds = load_from_disk(path=cfg.eval_ds_path, keep_in_memory=True)
+    eval_ds = load_from_disk(cfg.eval_ds_path, keep_in_memory=True)
     eval_dataset = (
         eval_ds
         .map(format_to_messages, batched=True, num_proc=4)
@@ -355,11 +355,13 @@ if __name__ == "__main__":
     try:
         run_training(cfg)
     finally:
-        for h in list(log.handlers):
-            if isinstance(h, logging.FileHandler):
-                h.close()
-                log.removeHandler(h)
-        except Exception: pass
+        try:
+            for h in list(log.handlers):
+                if isinstance(h, logging.FileHandler):
+                    h.close()
+                    log.removeHandler(h)
+        except Exception:
+            pass
 
         gc.collect()
         if torch.cuda.is_available():
