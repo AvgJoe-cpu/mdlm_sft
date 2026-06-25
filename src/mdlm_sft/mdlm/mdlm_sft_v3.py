@@ -332,14 +332,10 @@ def run_training(cfg: MDLMSFTConfig, train_ds=None, eval_ds=None) -> None:
             torch.cuda.empty_cache()
 
 
-import sys
 from transformers import HfArgumentParser
-def main() -> None:
+
+if __name__ == "__main__":
     parser = HfArgumentParser(MDLMSFTConfig)
     (cfg,) = parser.parse_args_into_dataclasses()
     log.info("Training config:\n%s", cfg.to_json_string())
     run_training(cfg)
-
-
-if __name__ == "__main__":
-    main()
