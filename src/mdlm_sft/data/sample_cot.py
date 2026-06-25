@@ -8,16 +8,17 @@ import datasets
 datasets.config.IN_MEMORY_MAX_SIZE = 32 * 1024 ** 3  # 32GB
 
 
-def format_cot_completion_post(batch):  # C2: (labels + CoT)
+
+def format_cot_completion_pre(batch):  # C1: (CoT + labels)
     return {
-        "prompt": batch["source"],
+        "prompt": batch["prompt"],
         "completion": [
-            f"<think> {r} </think> {t}"
-            for r, t in zip(batch["rationale"], batch["target"])
+            f"{r} {t}"
+            for r, t in zip(batch["rationale"], batch["completion"])
         ],
     }
 
-def load_and_process_cot_collection(BATCH_SIZE: int = 1000, OUTPUT_DIR=None) -> DatasetDict:
+def load_and_process_cot_collection(BATCH_SIZE: int = 8000, OUTPUT_DIR=None) -> DatasetDict:
     try:
         ds = load_dataset("avgJo3/Cot-collection-datasets-4.8.5", split="train")
         dataset = (
@@ -41,7 +42,7 @@ def load_and_process_cot_collection(BATCH_SIZE: int = 1000, OUTPUT_DIR=None) -> 
             .map(count_tokens_fn, batched=True, batch_size=BATCH_SIZE,                    fn_kwargs={"tokenizer": tokenizer, "field_name": "rationale"},  desc="Counting tokens in 'rationale'")
             .map(
                 lambda x: {"total_tokens": [p + c + r for p, c, r in zip(x["prompt_token_count"], x["completion_token_count"], x["rationale_token_count"])]},
-                batched=False, desc="Calculating total tokens",
+                batched=True, desc="Calculating total tokens",
             )
         )
         del tokenizer
@@ -53,19 +54,19 @@ def load_and_process_cot_collection(BATCH_SIZE: int = 1000, OUTPUT_DIR=None) -> 
             token_column="total_tokens",
             max_tokens=1024,
             eval_ratio=0.10,
-            split_ratios=[0.25, 0.5, 1.0],
+            split_ratios=[0.5, 1.0],
             random_seed=42,
         )
         del dataset
         gc.collect()
 
         # Build DatasetDict: eval + every training split
-        dataset_dict: Dict[str, Dataset] = {"eval": results["eval"]}
+        dataset_dict: Dict[str, Dataset] = {"eval": results["strat_eval"]}
         for ratio, split_info in sorted(results["splits"].items()):
             dataset_dict[_ratio_to_split_name(ratio)] = split_info["train"]
 
         dd = DatasetDict(dataset_dict)
-        dd = dd.map(format_cot_completion_post, batched=True, batch_size=BATCH_SIZE, desc="Formatting CoT completions with <think> tags").remove_columns(["rationale"])    
+        dd = dd.map(format_cot_completion_pre, batched=True, batch_size=BATCH_SIZE, desc="Formatting CoT completions with <think> tags").remove_columns(["rationale"])    
 
         del results, dataset_dict
         gc.collect()
@@ -88,3 +89,7 @@ def upload_cot_to_hf():
     dd = load_and_process_cot_collection()
     dd.push_to_hub("avgJo3/cot-strat", private=False)
     del dd 
+
+
+if __name__ == "__main__":
+    upload_cot_to_hf()

@@ -306,7 +306,7 @@ class TrainingConfig:
     # ── Logging ──────────────────────────────────────────────────────────────
     logging_steps: int = 50
     report_to: str = "wandb"
-    project: Optional[str] = "CoT-chat"      # only relevant if report_to != "none"
+    project: Optional[str] = "huggingface"      # only relevant if report_to != "none"
 
     # ── Memory & performance ─────────────────────────────────────────────────
     gradient_checkpointing: bool = False
