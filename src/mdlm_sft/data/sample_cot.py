@@ -21,7 +21,7 @@ def create_nested_stratified_splits_hf(
     max_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     if split_ratios is None:
-        split_ratios = [0.5, 1.0]
+        split_ratios = [0.25, 0.5, 1.0]
 
     np.random.seed(random_seed)
     random.seed(random_seed)
@@ -133,7 +133,7 @@ def load_and_process_cot_collection(BATCH_SIZE: int = 8000, OUTPUT_DIR=None) -> 
             token_column="total_tokens",
             max_tokens=1024,
             eval_ratio=0.10,
-            split_ratios=[0.5, 1.0],
+            split_ratios=[0.25,0.5, 1.0],
             random_seed=42,
         )
         del dataset

@@ -29,49 +29,49 @@ def load_and_process_tinystories(BATCH_SIZE: int = 1000, N_BINS: int = 8, OUTPUT
         del tokenizer  
         gc.collect()
 
-        filtered_ds = dd["train"].filter(lambda x: x["text_token_count"] <= 1024, desc="Filtering examples with total token count > 1024")
+        # filtered_ds = dd["train"].filter(lambda x: x["text_token_count"] <= 1024, desc="Filtering examples with total token count > 1024")
 
-        token_counts = np.array(filtered_ds["text_token_count"])
-        bin_edges    = np.linspace(token_counts.min(), token_counts.max(), N_BINS + 1)
-        ds = filtered_ds.map(
-            lambda batch: {"bin": [f"bin_{i}" for i in np.searchsorted(bin_edges[1:-1], batch["text_token_count"], side="left")]},
-            batched=True, batch_size=BATCH_SIZE, desc="Assigning bins based on token count",
-        )
+        # token_counts = np.array(filtered_ds["text_token_count"])
+        # bin_edges    = np.linspace(token_counts.min(), token_counts.max(), N_BINS + 1)
+        # ds = filtered_ds.map(
+        #     lambda batch: {"bin": [f"bin_{i}" for i in np.searchsorted(bin_edges[1:-1], batch["text_token_count"], side="left")]},
+        #     batched=True, batch_size=BATCH_SIZE, desc="Assigning bins based on token count",
+        # )
         del filtered_ds, token_counts, bin_edges
         gc.collect()
 
-        result = create_nested_stratified_splits_hf(
-            dataset=ds,
-            task_column="bin",
-            eval_ratio=0.1,
-            split_ratios=[0.125, 0.25, 0.5, 1.0],
-            random_seed=42,
-            token_column=None,
-            max_tokens=None,
-        )
+        # result = create_nested_stratified_splits_hf(
+        #     dataset=ds,
+        #     task_column="bin",
+        #     eval_ratio=0.1,
+        #     split_ratios=[0.125, 0.25, 0.5, 1.0],
+        #     random_seed=42,
+        #     token_column=None,
+        #     max_tokens=None,
+        # )
 
-        dataset_dict: Dict[str, Dataset] = {
-            "strat_eval": result["strat_eval"].remove_columns("bin"),
-            "validation": dd["validation"],
-        }
-        for ratio, split_info in sorted(result["splits"].items()):
-            dataset_dict[_ratio_to_split_name(ratio)] = split_info["train"].remove_columns("bin")
-        out_dd = DatasetDict(dataset_dict)
+        # dataset_dict: Dict[str, Dataset] = {
+        #     "strat_eval": result["strat_eval"].remove_columns("bin"),
+        #     "validation": dd["validation"],
+        # }
+        # for ratio, split_info in sorted(result["splits"].items()):
+        #     dataset_dict[_ratio_to_split_name(ratio)] = split_info["train"].remove_columns("bin")
+        # out_dd = DatasetDict(dataset_dict)
 
         del ds, result, dataset_dict, dd
         gc.collect()
 
         # ---- Sentence-split into prompt/completion using SaT ----
-        from wtpsplit import SaT
-        model = SaT("sat-3l-sm")
-        if torch.cuda.is_available():
-            model.to("cuda")
-        try:
-            out_dd = (
-                out_dd
-                .map(sent_tokenize, fn_kwargs={"model": model, "text_field": "text"}, batched=True, batch_size=BATCH_SIZE, desc="Sentence-splitting with SaT")
-                .map(split_sentences_to_prompt_completion, batched=True, desc="Splitting sentences into prompt/completion")
-            )
+        # from wtpsplit import SaT
+        # model = SaT("sat-3l-sm")
+        # if torch.cuda.is_available():
+        #     model.to("cuda")
+        # try:
+        #     out_dd = (
+        #         out_dd
+        #         .map(sent_tokenize, fn_kwargs={"model": model, "text_field": "text"}, batched=True, batch_size=BATCH_SIZE, desc="Sentence-splitting with SaT")
+        #         .map(split_sentences_to_prompt_completion, batched=True, desc="Splitting sentences into prompt/completion")
+        #     )
         finally:
             del model
             if torch.cuda.is_available():
