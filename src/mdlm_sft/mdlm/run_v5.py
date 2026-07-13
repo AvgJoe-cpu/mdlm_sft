@@ -287,7 +287,7 @@ for attempt in range(1, 4):
         remote = upload_artifacts_to_bucket(
             SCRATCH,
             namespace="avgJo3",
-            bucket_name="mdlm-sft-artifacts",
+            bucket_name="final-mdlm-sft-artifacts",
             private=True,
         )
         print(f"[done] artifacts uploaded to {remote}")
