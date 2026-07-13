@@ -18,7 +18,7 @@ from mdlm_sft.mdlm.mdlm_sft_v4   import MDLMSFTConfig, run_training
 SCRATCH = Path(tempfile.mkdtemp(prefix="mdlm-sft-"))
 print(f"[stub] scratch dir: {SCRATCH}")
 
-BASE_DATASET_PATH = "avgJo3/tinystories-strat"
+BASE_DATASET_PATH = "avgJo3/writingprompts-strat"
 DATA              = str(SCRATCH / "data")
 MODEL             = str(SCRATCH / "model")
 
@@ -227,31 +227,57 @@ dsd["validation"].save_to_disk(f"{DATA}_validation")
 
 
 # ── executor ─────────────────────────────────────────────────────────────────
+import os
+
+# ── Executor with verification ─────────────────────────────────────────
 global_ov = config["train_overrides"]
 
 for run_name, run in config["RUNS"].items():
     run_ov = run.get("train_overrides", {})
     for stage, sc in run["ROUNDS"].items():
         print(f"\n=== {run_name} / {stage} ===")
-        if stage.endswith("-train"):
-            merged = {**global_ov, **run_ov}
-            run_training(MDLMSFTConfig(**sc, **merged), save_last=True)
-        elif stage.endswith("-inference"):
-            run_inference(MDLMGenerationConfig(**sc))
-        elif stage.endswith("-mix"):
-            mix_ds(**sc)
-        else:
-            raise ValueError(f"unknown stage suffix: {stage!r}")
+
+        try:
+            if stage.endswith("-train"):
+                merged = {**global_ov, **run_ov}
+                run_training(MDLMSFTConfig(**sc, **merged), save_last=True)
+                # Verify: output_dir exists and has model files
+                expected = sc["output_dir"]
+                assert os.path.isdir(expected), f"[FAIL] {stage} did not create {expected}"
+                files = os.listdir(expected)
+                print(f"  ✓ {expected}/ contains {len(files)} files: {files[:5]}")
+
+            elif stage.endswith("-inference"):
+                run_inference(MDLMGenerationConfig(**sc))
+                # Verify: output dataset exists
+                expected = sc["dataset_output_path"]
+                assert os.path.isdir(expected), f"[FAIL] {stage} did not create {expected}"
+                print(f"  ✓ {expected}/ created")
+
+            elif stage.endswith("-mix"):
+                mix_ds(**sc)
+                expected = sc["mix_output_path"]
+                assert os.path.isdir(expected), f"[FAIL] {stage} did not create {expected}"
+                print(f"  ✓ {expected}/ created")
+
+            else:
+                raise ValueError(f"unknown stage suffix: {stage!r}")
+
+        except Exception as e:
+            print(f"[FAIL] {run_name}/{stage}: {type(e).__name__}: {e}")
+            raise
 
         gc.collect()
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                torch.mps.empty_cache()
         except ImportError:
             pass
+
+print("\n" + "=" * 60)
+print("SMOKE TEST PASSED")
+print("=" * 60)
 
 
 
