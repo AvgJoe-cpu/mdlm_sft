@@ -223,7 +223,7 @@ def run_evaluation(cfg: MDLMEvalConfig) -> None:
     assert tokenizer.pad_token_id is not None, "tokenizer has no pad_token_id"
 
     model     = AutoModelForMaskedLM.from_pretrained(cfg.model_name_or_path, trust_remote_code=True).eval()
-    scheduler = LinearAlphaScheduler
+    scheduler = LinearAlphaScheduler()
     keep = {"id", "prompt", "completion"}
     ds = (
         load_from_disk(cfg.gold_path)
