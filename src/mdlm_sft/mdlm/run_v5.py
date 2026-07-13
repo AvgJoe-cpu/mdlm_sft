@@ -201,16 +201,16 @@ config = {
     },
     "RUNS": {
         "BASE": {
-            "ROUNDS": base_rounds(n_rounds=2),
+            "ROUNDS": base_rounds(n_rounds=5),
         },
         "ABLATION": {
-            "ROUNDS": ablation_rounds(n_rounds=2),
+            "ROUNDS": ablation_rounds(n_rounds=5),
         },
         "BASE-MIX": {
-            "ROUNDS": mix_rounds(n_rounds=2),
+            "ROUNDS": mix_rounds(n_rounds=5),
         },
         "MIX-ABLATION": {
-            "ROUNDS": mix_ablation_rounds(n_rounds=2),
+            "ROUNDS": mix_ablation_rounds(n_rounds=5),
         },
     },
 }
