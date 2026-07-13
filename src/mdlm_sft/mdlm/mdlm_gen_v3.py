@@ -20,9 +20,9 @@ class MDLMGenerationConfig:
     dataset_input_path:  Optional[str] = None
     dataset_output_path: Optional[str] = None
     # generation knobs
-    response_length: int = 10
-    num_steps:       int = 10
-    batch_size:      int = 8
+    response_length: int = 128
+    num_steps:       int = 128
+    batch_size:      int = 64
 
 
 def generate_mdlm(

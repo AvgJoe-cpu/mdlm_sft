@@ -45,10 +45,19 @@ def resize_mdlm_vocab(model, new_vocab: int) -> None:
     out_lin.out_features = new_vocab
     model.config.vocab_size = new_vocab
 
+def download_base_model(target: str = "artifacts_weights_mdlm_base_mdlm-owt_chat") -> str:
+    """Download MDLM base weights, extend tokenizer with chat/special tokens,
+    resize the model's vocab embedding, and save the processed model+tokenizer.
 
-def download_base_model() -> None:
-    local_path = Path("artifacts_weights_mdlm_base_mdlm-owt")
-    chat_path  = Path("artifacts_weights_mdlm_base_mdlm-owt_chat")
+    Args:
+        target: Directory to write the processed (chat-ready) model + tokenizer to.
+                Defaults to the project-local path for backward compatibility.
+
+    Returns:
+        The `target` path as a string, for convenient chaining.
+    """
+    local_path = Path("artifacts_weights_mdlm_base_mdlm-owt")   # raw download cache (project-local, unchanged)
+    chat_path  = Path(target)                                    # processed output (parameterized)
 
     required_files = [
         "model.safetensors",
@@ -62,13 +71,12 @@ def download_base_model() -> None:
     if files_to_download:
         download_bucket_files("avgJo3/mdlm-owt-bucket", files=files_to_download)
 
-    model     = AutoModelForMaskedLM.from_pretrained(str(local_path), trust_remote_code=True, device_map="auto")        
+    model     = AutoModelForMaskedLM.from_pretrained(str(local_path), trust_remote_code=True, device_map="auto")
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
         model = model.to(torch.bfloat16)
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         model = model.to(torch.bfloat16)
-
 
     DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
@@ -108,21 +116,23 @@ def download_base_model() -> None:
         }
     )
     if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token    
-
+        tokenizer.pad_token = tokenizer.eos_token
 
     old_vocab = model.backbone.vocab_embed.embedding.shape[0]
     print(f"[mdl] pretrained vocab size: {old_vocab}")
-    
+
     assert old_vocab >= 50258, "checkpoint smaller than expected"
     mask_row_before = model.backbone.vocab_embed.embedding[50257].detach().clone().cpu()
 
     padded_vocab = math.ceil(len(tokenizer) / 64) * 64
     resize_mdlm_vocab(model, padded_vocab)
     new_vocab = model.backbone.vocab_embed.embedding.shape[0]
+
+    chat_path.mkdir(parents=True, exist_ok=True)                 # ← added: ensure target dir exists
     model.save_pretrained(str(chat_path))
     tokenizer.save_pretrained(str(chat_path))
 
+    return str(chat_path)                                        # ← added: return path
 
 
 def _download_one(checkpoint: str, local_path: Path, repo_id: str, needed: list[str]) -> Path:

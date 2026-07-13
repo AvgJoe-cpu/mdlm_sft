@@ -52,7 +52,7 @@ def base_rounds(n_rounds: int) -> dict:
 def ablation_rounds(n_rounds: int) -> dict:
     """ABLATION: reloads previous round's checkpoint (not base). Reuses BASE's R0."""
     rounds = {}
-    for n in range(1, n_rounds + 1):
+    for n in range(1, n_rounds):
         prev_model = f"{MODEL}_trained_r0"        if n == 1 else f"{MODEL}_ablation-trained_r{n-1}"
         prev_data  = f"{DATA}_train-generated_r0" if n == 1 else f"{DATA}_ablation-generated_r{n-1}"
         rounds[f"R{n}-train"] = {
@@ -73,7 +73,7 @@ def mix_rounds(n_rounds: int, mix_factor: float = 1.0) -> dict:
     """BASE-MIX: each round mixes previous generation with d_train,
     then trains m_base on the mix. Reuses BASE's R0 generation for R1."""
     rounds = {}
-    for n in range(1, n_rounds + 1):
+    for n in range(1, n_rounds):
         prev_gen = f"{DATA}_train-generated_r0" if n == 1 else f"{DATA}_mix-generated_r{n-1}"
         rounds[f"R{n}-mix"] = {
             "mix_factor":      mix_factor,
@@ -100,7 +100,7 @@ def mix_ablation_rounds(n_rounds: int, mix_factor: float = 1.0) -> dict:
     then trains the *previous round's checkpoint* (not m_base) on the mix.
     Reuses BASE's R0 outputs for R1's boundary case."""
     rounds = {}
-    for n in range(1, n_rounds + 1):
+    for n in range(1, n_rounds):
         prev_gen   = f"{DATA}_train-generated_r0" if n == 1 else f"{DATA}_mix-ablation-generated_r{n-1}"
         prev_model = f"{MODEL}_trained_r0"        if n == 1 else f"{MODEL}_mix-ablation-trained_r{n-1}"
         rounds[f"R{n}-mix"] = {
@@ -164,37 +164,52 @@ def upload_artifacts_to_bucket(scratch_dir: Path, *, namespace: str, bucket_name
 
 # ── config ───────────────────────────────────────────────────────────────────
 config = {
+    # ── Shared defaults across all arms and rounds ──────────────────────
     "train_overrides": {
-        "max_steps":                    4,
-        "eval_steps":                   2,
-        "logging_steps":                1,
-        "per_device_train_batch_size":  2,
-        "per_device_eval_batch_size":   2,
-        "gradient_accumulation_steps":  1,
-        "torch_compile":                False,
-        "activation_offloading":        False,
+        # HPO winners (from Stage-B)
+        "learning_rate":     1.84e-3,
+        "warmup_ratio":      0.1,
+        "weight_decay":      0.01,
+        "time_epsilon":      1e-3,
+        "lr_scheduler_type": "cosine",
+        "loss_weight_type":  "scheduler",
+
+        # Epoch-based training: 10 epochs per round.
+        # (max_steps removed; num_train_epochs governs length.)
+        "num_train_epochs":  10,
+
+        # Batch / memory (production, matches HPO effective B = 320)
+        "per_device_train_batch_size":  64,
+        "per_device_eval_batch_size":   64,
+        "gradient_accumulation_steps":  5,
         "bf16":                         True,
         "fp16":                         False,
-        "report_to":                    "none",
-        "eval_strategy":                "no",
-        "eval_on_start":                False,
-        "save_strategy":                "no",
+        "torch_compile":                True,
+        "activation_offloading":        False,
+
+        # Eval / logging
+        "eval_strategy":  "epoch",     # one eval per epoch, substrate-agnostic
+        "eval_on_start":  True,        # baseline eval before training
+        "logging_steps":  50,
+        "report_to":      "wandb",
+
+        # Save: keep the final checkpoint per round (needed for chain training).
+        "save_strategy":     "no",
+
+        # Reproducibility
+        "seed":       42,
     },
     "RUNS": {
         "BASE": {
-            "train_overrides": {"learning_rate": 1e-5},
             "ROUNDS": base_rounds(n_rounds=2),
         },
         "ABLATION": {
-            "train_overrides": {"learning_rate": 1e-5},
             "ROUNDS": ablation_rounds(n_rounds=2),
         },
         "BASE-MIX": {
-            "train_overrides": {"learning_rate": 1e-5},
             "ROUNDS": mix_rounds(n_rounds=2),
         },
         "MIX-ABLATION": {
-            "train_overrides": {"learning_rate": 1e-5},
             "ROUNDS": mix_ablation_rounds(n_rounds=2),
         },
     },
@@ -239,16 +254,6 @@ for run_name, run in config["RUNS"].items():
             pass
 
 
-# ── push to bucket ───────────────────────────────────────────────────────────
-# ── push to bucket ───────────────────────────────────────────────────────────
-print(f"\n[upload] scratch contents ({SCRATCH}):")
-total = 0
-for p in sorted(SCRATCH.iterdir()):
-    size = _dir_size(p)
-    total += size
-    print(f"  {size / 1e6:>10.1f} MB   {p.name}")
-print(f"  {'-' * 10}")
-print(f"  {total / 1e6:>10.1f} MB   TOTAL ({total / 1e9:.2f} GB)")
 
 delay = 30
 for attempt in range(1, 4):
