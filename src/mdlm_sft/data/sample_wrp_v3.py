@@ -14,6 +14,9 @@ import re
 
 PREFIX_RE = re.compile(r'((?:\[\s[A-Z]+\s\]\s*){1,2})(.*)')
 
+def special_prefix(batch):
+    return {"completion": [f"<answer> {c}" for c in batch["completion"]]}
+
 def has_prefix(batch):
     return [PREFIX_RE.match(p) is not None for p in batch["prompt"]]
 
@@ -170,6 +173,11 @@ def load_and_process_writingprompts(
             "validation": val_ds,
             "test":       test_ds,
         })
+        out = out.map(
+            special_prefix,
+            batched=True, batch_size=batch_size, desc="Adding special prefix to prompt",
+
+        )
 
         del train_ds, val_ds, test_ds
 
