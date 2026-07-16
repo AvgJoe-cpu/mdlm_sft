@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoModelForMaskedLM, AutoTokenizer, HfArgumentParser
 from accelerate import PartialState
-
+from typing import Any, Optional, Union
 from .mdlm_helpers.mdlm_scheduler import LinearAlphaScheduler
 
 log = logging.getLogger(__name__)
@@ -25,8 +25,8 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class MDLMEvalConfig:
-    model_name_or_path: str = "bert-base-uncased"
-    dataset_path: Optional[str] = None   
+    model_name_or_path: Union[str, Path] = "bert-base-uncased"
+    dataset_path: Optional[Union[str, Path]] = None
     save_summary_path: str = "eval_outputs"
     max_length: int = 1024
     per_device_eval_batch_size: int = 8
@@ -309,9 +309,13 @@ def run_evaluation(cfg: MDLMEvalConfig) -> None:
     assert cfg.dataset_path is not None, "cfg.dataset_path is required"
 
     # ── 2. Tokenizer ─────────────────────────────────────────────────────────
+    # tokenizer = AutoTokenizer.from_pretrained(
+    #     cfg.model_name_or_path, trust_remote_code=True
+    # )
+
     tokenizer = AutoTokenizer.from_pretrained(
-        cfg.model_name_or_path, trust_remote_code=True
-    )
+        Path(cfg.model_name_or_path), trust_remote_code=True
+    )    
     assert tokenizer.pad_token_id is not None, "tokenizer has no pad_token_id"
     assert tokenizer.mask_token_id is not None, "tokenizer has no mask_token_id"  # ← required by compute_mdlm_ppl
 
@@ -322,12 +326,19 @@ def run_evaluation(cfg: MDLMEvalConfig) -> None:
         cfg.bf16 = False
     model_dtype = torch.bfloat16 if cfg.bf16 else torch.float32
 
+    # model = AutoModelForMaskedLM.from_pretrained(
+    #     cfg.model_name_or_path,
+    #     trust_remote_code=True,
+    #     torch_dtype=model_dtype,
+    # ).to(device).eval()
+
+
+# line 324
     model = AutoModelForMaskedLM.from_pretrained(
-        cfg.model_name_or_path,
+        Path(cfg.model_name_or_path),
         trust_remote_code=True,
         torch_dtype=model_dtype,
     ).to(device).eval()
-
     scheduler = LinearAlphaScheduler()
 
     # ── 4. Dataset: handle DatasetDict, drop unused columns ──────────────────
