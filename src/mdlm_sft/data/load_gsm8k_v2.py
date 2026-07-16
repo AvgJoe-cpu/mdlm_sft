@@ -5,11 +5,31 @@ from .utils import normalize_whitespace, add_hash_id, count_tokens_fn
 
 from pathlib import Path
 
+# def render_thought_process(batch):
+#     return {
+#         "prompt": batch["question"],
+#         "completion": [
+#             a.replace("####", "<answer>") for a in batch["answer"]
+#         ],
+#     }
+
+# def render_thought_process(batch):
+#     return {
+#         "completion": [
+#             a.replace("<<", "<think>").replace(">>", "</think>")
+#             for a in batch["completion"]
+#         ],
+#     }
+
+
 def render_thought_process(batch):
     return {
         "prompt": batch["question"],
         "completion": [
-            a.replace("####", "<answer>") for a in batch["answer"]
+            a.replace("####", "<answer>")
+             .replace("<<", "<think>")
+             .replace(">>", "</think>")
+            for a in batch["answer"]
         ],
     }
 
