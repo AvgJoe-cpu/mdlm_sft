@@ -314,8 +314,10 @@ def run_evaluation(cfg: MDLMEvalConfig) -> None:
     # )
 
     tokenizer = AutoTokenizer.from_pretrained(
-        Path(cfg.model_name_or_path), trust_remote_code=True
-    )    
+        Path(cfg.model_name_or_path),
+        trust_remote_code=True,
+        local_files_only=True,
+    )
     assert tokenizer.pad_token_id is not None, "tokenizer has no pad_token_id"
     assert tokenizer.mask_token_id is not None, "tokenizer has no mask_token_id"  # ← required by compute_mdlm_ppl
 
@@ -333,11 +335,12 @@ def run_evaluation(cfg: MDLMEvalConfig) -> None:
     # ).to(device).eval()
 
 
-# line 324
+
     model = AutoModelForMaskedLM.from_pretrained(
         Path(cfg.model_name_or_path),
         trust_remote_code=True,
         torch_dtype=model_dtype,
+        local_files_only=True,
     ).to(device).eval()
     scheduler = LinearAlphaScheduler()
 
